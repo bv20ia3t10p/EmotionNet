@@ -52,15 +52,19 @@ class SimpleAttention(nn.Module):
     def __init__(self, channels, reduction=16):
         super(SimpleAttention, self).__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)  # Add max pooling for better feature focus
         self.fc = nn.Sequential(
-            nn.Conv2d(channels, channels // reduction, kernel_size=1, bias=False),
+            nn.Linear(channels * 2, channels // reduction, bias=False),  # Process both avg and max features
             nn.ReLU(inplace=True),
-            nn.Conv2d(channels // reduction, channels, kernel_size=1, bias=False),
+            nn.Linear(channels // reduction, channels, bias=False),
             nn.Sigmoid()
         )
         
     def forward(self, x):
-        att = self.fc(self.avg_pool(x))
+        b, c, _, _ = x.size()
+        avg_out = self.avg_pool(x).view(b, c)
+        max_out = self.max_pool(x).view(b, c)
+        att = self.fc(torch.cat([avg_out, max_out], dim=1)).view(b, c, 1, 1)
         return x * att
 
 
@@ -269,8 +273,13 @@ class AdvancedEmoteNet(nn.Module):
                     if layer.bias is not None:
                         nn.init.zeros_(layer.bias)
                 elif isinstance(layer, nn.Linear):
-                    # Use smaller initialization for better stability
-                    nn.init.normal_(layer.weight, 0, 0.005)
+                    # Use specialized initialization based on layer position
+                    if layer == list(self.classifier.modules())[-1]:  # Final classification layer
+                        # Use smaller initialization for final layer for better stability
+                        nn.init.normal_(layer.weight, 0, 0.001)
+                    else:
+                        # Better initialization for hidden layers
+                        nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
                     if layer.bias is not None:
                         nn.init.zeros_(layer.bias)
         
@@ -297,6 +306,18 @@ class AdvancedEmoteNet(nn.Module):
         
         # Concatenate pooling results for richer feature representation
         x = torch.cat([avg_pool, max_pool], dim=1)
+        
+        # Add feature mixing for better robustness
+        if self.training and torch.cuda.is_available():
+            batch_size = x.size(0)
+            if batch_size > 1:  # Only apply when batch size > 1
+                # Create a random permutation of batch indices
+                perm = torch.randperm(batch_size).cuda()
+                # Mix a small portion of features (5%)
+                mix_ratio = 0.05
+                # Select mixed features based on random mask
+                mask = (torch.rand(batch_size) < mix_ratio).float().cuda().view(-1, 1)
+                x = x * (1 - mask) + x[perm] * mask
         
         # Apply classifier
         x = self.classifier(x)

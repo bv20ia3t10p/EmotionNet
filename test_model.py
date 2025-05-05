@@ -55,9 +55,10 @@ def test_model():
     class_total = [0] * NUM_CLASSES
     all_preds = []
     all_targets = []
+    all_probs = []  # Store class probabilities for ROC-AUC calculation
     
-    # Test with TTA (Test Time Augmentation)
-    print(f"🔹 Evaluating model with Test Time Augmentation ({TTA_NUM_AUGMENTS} augmentations)...")
+    # Advanced TTA (Test Time Augmentation)
+    print(f"🔹 Evaluating model with Advanced TTA ({TTA_NUM_AUGMENTS} augmentations)...")
     with torch.no_grad():
         for images, targets in tqdm(val_loader):
             images, targets = images.to(device), targets.to(device)
@@ -78,11 +79,14 @@ def test_model():
                 # Small shifts based on modulo 3
                 shift_type = aug_idx % 3
                 if shift_type == 0:  # Horizontal shift
-                    aug_images = torch.roll(aug_images, shifts=(2, 0), dims=(2, 3))
+                    shift_amount = 4 if aug_idx < 3 else 2
+                    aug_images = torch.roll(aug_images, shifts=(shift_amount, 0), dims=(2, 3))
                 elif shift_type == 1:  # Vertical shift
-                    aug_images = torch.roll(aug_images, shifts=(0, 2), dims=(2, 3))
+                    shift_amount = 4 if aug_idx < 3 else 2
+                    aug_images = torch.roll(aug_images, shifts=(0, shift_amount), dims=(2, 3))
                 elif shift_type == 2:  # Both directions
-                    aug_images = torch.roll(aug_images, shifts=(2, 2), dims=(2, 3))
+                    shift_amount = 3 if aug_idx < 3 else 2
+                    aug_images = torch.roll(aug_images, shifts=(shift_amount, shift_amount), dims=(2, 3))
                 
                 # Center crop with padding for odd augmentation indices
                 if aug_idx % 2 == 1:
@@ -90,6 +94,12 @@ def test_model():
                     padded = torch.zeros_like(aug_images)
                     padded[:, :, pad_size:-pad_size, pad_size:-pad_size] = aug_images[:, :, pad_size:-pad_size, pad_size:-pad_size]
                     aug_images = padded
+                
+                # Color jitter for high indices
+                if aug_idx > 3:
+                    # Simple brightness adjustment (multiply by scalar)
+                    brightness_factor = 0.9 + (aug_idx % 3) * 0.1  # 0.9, 1.0, or 1.1
+                    aug_images = aug_images * brightness_factor
                 
                 # Add to ensemble
                 aug_outputs = model(aug_images)
@@ -99,6 +109,7 @@ def test_model():
             outputs /= TTA_NUM_AUGMENTS
             
             # Get predictions
+            probs = torch.nn.functional.softmax(outputs, dim=1)
             _, predicted = outputs.max(1)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
@@ -111,9 +122,10 @@ def test_model():
                 if pred == label:
                     class_correct[label] += 1
                     
-            # Store predictions and targets for confusion matrix
+            # Store predictions and targets for metrics
             all_preds.extend(predicted.cpu().numpy())
             all_targets.extend(targets.cpu().numpy())
+            all_probs.extend(probs.cpu().numpy())
     
     # Calculate overall accuracy
     accuracy = 100.0 * correct / total
@@ -131,12 +143,13 @@ def test_model():
     print("\n   🔹 Per-class accuracies:")
     for i, (name, acc) in enumerate(zip(class_names, class_accuracies)):
         print(f"      - {name}: {acc:.2f}% ({class_correct[i]}/{class_total[i]})")
-        
-    # Plot confusion matrix if matplotlib is available
+    
+    # Calculate advanced metrics if sklearn is available
     try:
-        from sklearn.metrics import confusion_matrix
+        from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score
         import seaborn as sns
         
+        # Confusion matrix
         cm = confusion_matrix(all_targets, all_preds)
         plt.figure(figsize=(10, 8))
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
@@ -146,8 +159,27 @@ def test_model():
         plt.tight_layout()
         plt.savefig(os.path.join(ROOT, 'confusion_matrix.png'))
         print(f"\n✅ Confusion matrix saved to {os.path.join(ROOT, 'confusion_matrix.png')}")
+        
+        # Classification report (precision, recall, f1-score)
+        report = classification_report(all_targets, all_preds, target_names=class_names)
+        print("\n🔹 Classification Report:")
+        print(report)
+        
+        # ROC-AUC for multi-class
+        all_probs = np.array(all_probs)
+        all_targets_one_hot = np.zeros((len(all_targets), NUM_CLASSES))
+        for i, target in enumerate(all_targets):
+            all_targets_one_hot[i, target] = 1
+            
+        # One-vs-rest ROC-AUC
+        try:
+            roc_auc = roc_auc_score(all_targets_one_hot, all_probs, multi_class='ovr')
+            print(f"\n🔹 ROC-AUC Score (One-vs-Rest): {roc_auc:.4f}")
+        except ValueError as e:
+            print(f"\n⚠️ Could not calculate ROC-AUC: {e}")
+            
     except ImportError:
-        print("\n⚠️ sklearn or seaborn not installed, skipping confusion matrix visualization")
+        print("\n⚠️ sklearn or seaborn not installed, skipping advanced metrics visualization")
     
     return accuracy
 
