@@ -49,42 +49,73 @@ def prepare_training_components(model, train_loader):
     if int(os.environ.get('LOOKAHEAD_ENABLED', 0)):
         print("🔹 Using Lookahead optimizer wrapper for improved large batch training")
         from model_utils import Lookahead
-        optimizer = Lookahead(base_optimizer, k=5, alpha=0.5)
+        optimizer = Lookahead(
+            base_optimizer, 
+            k=int(os.environ.get('LOOKAHEAD_K', 5)), 
+            alpha=float(os.environ.get('LOOKAHEAD_ALPHA', 0.5))
+        )
     else:
         optimizer = base_optimizer
     
     # Set up gradient scaler for mixed precision training
     scaler = GradScaler() if USE_AMP else None
     
-    # Use cosine annealing scheduler with warmup
-    total_steps = NUM_EPOCHS * len(train_loader) // ACCUMULATION_STEPS
-    warmup_steps = WARMUP_EPOCHS * len(train_loader) // ACCUMULATION_STEPS
-    
-    print(f"🔹 Total steps: {total_steps}, Warmup steps: {warmup_steps}")
-    
-    # Create scheduler on the base optimizer if using Lookahead
+    # Use appropriate scheduler based on configuration
+    scheduler_type = os.environ.get('SCHEDULER_TYPE', 'cosine')
     scheduler_optimizer = base_optimizer if int(os.environ.get('LOOKAHEAD_ENABLED', 0)) else optimizer
+    print(f"🔹 Using {scheduler_type} learning rate scheduler")
     
-    # Use one cycle policy for better convergence
-    one_cycle_scheduler = optim.lr_scheduler.OneCycleLR(
-        scheduler_optimizer, 
-        max_lr=LEARNING_RATE,
-        epochs=NUM_EPOCHS,
-        steps_per_epoch=len(train_loader) // ACCUMULATION_STEPS,
-        pct_start=0.1,
-        anneal_strategy='cos',
-        div_factor=25.0,
-        final_div_factor=1000.0
-    )
+    # Create scheduler based on type
+    if scheduler_type == "cosine" or scheduler_type == "cosine_restart":
+        # Use the create_lr_scheduler function from model_utils
+        cosine_cycles = int(os.environ.get('COSINE_CYCLES', 3))
+        scheduler = create_lr_scheduler(
+            scheduler_optimizer, 
+            train_loader, 
+            scheduler_type=scheduler_type,
+            cosine_cycles=cosine_cycles
+        )
+        
+        # Placeholder for ReduceLROnPlateau as backup
+        plateau_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            scheduler_optimizer, mode='max', factor=FACTOR, patience=PATIENCE, verbose=True
+        )
+    else:
+        # Use ReduceLROnPlateau as the primary scheduler
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            scheduler_optimizer, mode='max', factor=FACTOR, patience=PATIENCE, verbose=True
+        )
+        plateau_scheduler = scheduler  # Same scheduler
     
-    # Use ReduceLROnPlateau as backup scheduler
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        scheduler_optimizer, mode='max', factor=FACTOR, patience=PATIENCE, verbose=True
-    )
+    # Initialize Stochastic Weight Averaging if enabled
+    swa_enabled = int(os.environ.get('SWA_ENABLED', 0))
+    if swa_enabled:
+        swa_start = int(os.environ.get('SWA_START_EPOCH', 150))
+        swa_freq = int(os.environ.get('SWA_FREQ', 5))
+        print(f"🔹 Stochastic Weight Averaging (SWA) enabled, starting at epoch {swa_start}")
+        from model_utils import SWA
+        swa = SWA(model, swa_start=swa_start, swa_freq=swa_freq)
+    else:
+        swa = None
+    
+    # Setup distillation loss if enabled
+    distillation_enabled = int(os.environ.get('SELF_DISTILLATION_ENABLED', 0))
+    if distillation_enabled:
+        distill_start = int(os.environ.get('SELF_DISTILLATION_START', 100))
+        distill_temp = float(os.environ.get('SELF_DISTILLATION_TEMP', 2.0))
+        distill_alpha = float(os.environ.get('SELF_DISTILLATION_ALPHA', 0.3))
+        print(f"🔹 Self-distillation enabled, starting at epoch {distill_start}")
+        distill_criterion = DistillationLoss(alpha=distill_alpha, temperature=distill_temp)
+        teacher_model = None  # Will be loaded at the appropriate epoch
+    else:
+        distill_criterion = None
+        teacher_model = None
+        distill_start = float('inf')  # Never start
     
     early_stopping = EarlyStopping(patience=EARLY_STOPPING_PATIENCE)
     print("✅ Training Components Ready\n")
-    return criterion, optimizer, scheduler, one_cycle_scheduler, early_stopping, scaler
+    
+    return criterion, optimizer, scheduler, plateau_scheduler, early_stopping, scaler, swa, distill_criterion, teacher_model, distill_start
 
 
 def compute_class_weights(dataset_path):
@@ -113,7 +144,7 @@ def compute_class_weights(dataset_path):
     return weights.tolist()
 
 
-def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_transform, cutmix_transform, one_cycle_scheduler, scaler=None, epoch=0):
+def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_transform, cutmix_transform, scheduler, scaler=None, epoch=0, teacher_model=None, distill_criterion=None, distill_start=float('inf')):
     model.train()
     total_loss = 0
     correct = 0
@@ -122,6 +153,12 @@ def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_
     data_time = AverageMeter()
     losses = AverageMeter()
     accs = AverageMeter()
+    
+    # Enable/disable self-distillation based on epoch
+    use_distillation = teacher_model is not None and epoch >= distill_start
+    if use_distillation:
+        print(f"🔹 Using self-distillation at epoch {epoch}")
+        teacher_model.eval()  # Teacher should be in eval mode
     
     # Enable/disable features based on epoch
     if epoch < FREEZE_BACKBONE_EPOCHS and hasattr(model, 'backbone'):
@@ -134,9 +171,41 @@ def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_
             param.requires_grad = True
         print("✅ Backbone unfrozen at epoch", epoch)
     
-    # Gradually enable more complex augmentations as training progresses
-    mixup_probability = min(MIXUP_PROB, MIXUP_PROB * epoch / 10) if epoch < 10 else MIXUP_PROB
-    cutmix_probability = min(CUTMIX_PROB, CUTMIX_PROB * epoch / 10) if epoch < 10 else CUTMIX_PROB
+    # Progressive augmentation phases
+    progressive_aug = int(os.environ.get('PROGRESSIVE_AUGMENTATION', 0))
+    if progressive_aug:
+        phase_1 = int(os.environ.get('PHASE_1_EPOCHS', 15))
+        phase_2 = int(os.environ.get('PHASE_2_EPOCHS', 40))
+        phase_3 = int(os.environ.get('PHASE_3_EPOCHS', 70))
+        phase_4 = int(os.environ.get('PHASE_4_EPOCHS', 150))
+        
+        # Set augmentation strength based on phase
+        if epoch < phase_1:
+            phase = 1
+            mixup_probability = MIXUP_PROB * 0.3  # Reduced in phase 1
+            cutmix_probability = CUTMIX_PROB * 0.3  # Reduced in phase 1
+        elif epoch < phase_2:
+            phase = 2
+            mixup_probability = MIXUP_PROB * 0.6  # Moderate in phase 2
+            cutmix_probability = CUTMIX_PROB * 0.6  # Moderate in phase 2
+        elif epoch < phase_3:
+            phase = 3
+            mixup_probability = MIXUP_PROB * 0.8  # Stronger in phase 3
+            cutmix_probability = CUTMIX_PROB * 0.8  # Stronger in phase 3
+        elif epoch < phase_4:
+            phase = 4
+            mixup_probability = MIXUP_PROB  # Full strength
+            cutmix_probability = CUTMIX_PROB  # Full strength
+        else:
+            phase = 5
+            mixup_probability = MIXUP_PROB * 1.1  # Even stronger for final phase
+            cutmix_probability = CUTMIX_PROB * 1.1  # Even stronger for final phase
+            
+        print(f"🔹 Progressive augmentation phase {phase} (epoch {epoch})")
+    else:
+        # Standard augmentation approach (gradually increasing)
+        mixup_probability = min(MIXUP_PROB, MIXUP_PROB * epoch / 10) if epoch < 10 else MIXUP_PROB
+        cutmix_probability = min(CUTMIX_PROB, CUTMIX_PROB * epoch / 10) if epoch < 10 else CUTMIX_PROB
     
     end = time.time()
     progress_bar = tqdm(enumerate(train_loader), total=len(train_loader))
@@ -162,13 +231,19 @@ def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_
                 # Forward pass
                 outputs = model(images)
                 
-                # For early epochs, use simple cross entropy on the dominant label
-                if epoch < 5:
-                    dominant_labels = labels_a if lam > 0.5 else labels_b
-                    loss = F.cross_entropy(outputs, dominant_labels)
+                # Apply distillation if enabled
+                if use_distillation:
+                    with torch.no_grad():
+                        teacher_outputs = teacher_model(images)
+                    loss = distill_criterion(outputs, teacher_outputs, mixed_targets, criterion)
                 else:
-                    # Compute loss for mixed labels
-                    loss = criterion(outputs, mixed_targets)
+                    # For early epochs, use simple cross entropy on the dominant label
+                    if epoch < 5:
+                        dominant_labels = labels_a if lam > 0.5 else labels_b
+                        loss = F.cross_entropy(outputs, dominant_labels)
+                    else:
+                        # Compute loss for mixed labels
+                        loss = criterion(outputs, mixed_targets)
                 
             elif rand_choice < mixup_probability + cutmix_probability and epoch >= 3:  # Only apply cutmix after third epoch
                 mixed_images, labels_a, labels_b, lam = cutmix_transform((images, labels))
@@ -182,17 +257,30 @@ def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_
                 # Forward pass
                 outputs = model(images)
                 
-                # For early epochs, use simple cross entropy on the dominant label
-                if epoch < 5:
-                    dominant_labels = labels_a if lam > 0.5 else labels_b
-                    loss = F.cross_entropy(outputs, dominant_labels)
+                # Apply distillation if enabled
+                if use_distillation:
+                    with torch.no_grad():
+                        teacher_outputs = teacher_model(images)
+                    loss = distill_criterion(outputs, teacher_outputs, mixed_targets, criterion)
                 else:
-                    # Compute loss for mixed labels
-                    loss = criterion(outputs, mixed_targets)
+                    # For early epochs, use simple cross entropy on the dominant label
+                    if epoch < 5:
+                        dominant_labels = labels_a if lam > 0.5 else labels_b
+                        loss = F.cross_entropy(outputs, dominant_labels)
+                    else:
+                        # Compute loss for mixed labels
+                        loss = criterion(outputs, mixed_targets)
                 
             else:  # Standard forward pass
                 outputs = model(images)
-                loss = criterion(outputs, labels)
+                
+                # Apply distillation if enabled
+                if use_distillation:
+                    with torch.no_grad():
+                        teacher_outputs = teacher_model(images)
+                    loss = distill_criterion(outputs, teacher_outputs, labels, criterion)
+                else:
+                    loss = criterion(outputs, labels)
         
         # Scale the loss according to accumulation steps
         loss = loss / ACCUMULATION_STEPS
@@ -211,8 +299,10 @@ def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
-                if one_cycle_scheduler is not None:
-                    one_cycle_scheduler.step()
+                
+                # Step scheduler if it's a per-step scheduler
+                if hasattr(scheduler, 'step_count'):  # OneCycleLR or CosineAnnealing*
+                    scheduler.step()
         else:
             loss.backward()
             
@@ -224,8 +314,10 @@ def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_
                     
                 optimizer.step()
                 optimizer.zero_grad()
-                if one_cycle_scheduler is not None:
-                    one_cycle_scheduler.step()
+                
+                # Step scheduler if it's a per-step scheduler
+                if hasattr(scheduler, 'step_count'):  # OneCycleLR or CosineAnnealing*
+                    scheduler.step()
         
         # Compute accuracy
         if (rand_choice < mixup_probability + cutmix_probability) and (epoch >= 1):
@@ -276,9 +368,15 @@ def create_model(device):
     elif MODEL_TYPE == "EmotionViT":
         print(f"🔹 Creating EmotionViT model with {BACKBONE} backbone")
         model = EmotionViT(backbone=BACKBONE, pretrained=PRETRAINED).to(device)
+    elif MODEL_TYPE == "HierarchicalViT":
+        print(f"🔹 Creating HierarchicalViT model with {BACKBONE} backbone")
+        model = HierarchicalViT(backbone=BACKBONE, pretrained=PRETRAINED).to(device)
+    elif MODEL_TYPE == "ConvNeXtEmoteNet":
+        print(f"🔹 Creating ConvNeXtEmoteNet model with {BACKBONE} backbone")
+        model = ConvNeXtEmoteNet(backbone=BACKBONE, pretrained=PRETRAINED).to(device)
     else:
-        print("⚠️ Unknown model type, defaulting to ResEmoteNet")
-        model = ResEmoteNet().to(device)
+        print("⚠️ Unknown model type, defaulting to AdvancedEmoteNet")
+        model = AdvancedEmoteNet(backbone=BACKBONE, pretrained=PRETRAINED).to(device)
     
     return model
 
@@ -295,12 +393,13 @@ def train_model():
     print("✅ DataLoaders Ready")
     print_image_stats(TRAIN_PATH, TEST_PATH)
     
-    criterion, optimizer, scheduler, one_cycle_scheduler, early_stopping, scaler = prepare_training_components(model, train_loader)
+    criterion, optimizer, scheduler, plateau_scheduler, early_stopping, scaler, swa, distill_criterion, teacher_model, distill_start = prepare_training_components(model, train_loader)
+    
     start_epoch = RESUME_EPOCH if RESUME_EPOCH else 0
     model = resume_model(device, model)
     
     # Apply large batch normalization handling if enabled
-    if int(os.environ.get('LARGE_BATCH_BN', 0)) and BATCH_SIZE >= 256:
+    if int(os.environ.get('LARGE_BATCH_BN', 0)) and BATCH_SIZE >= 64:
         from model_utils import update_bn_for_large_batch
         model = update_bn_for_large_batch(train_loader, model, device)
     
@@ -318,20 +417,51 @@ def train_model():
     print("🔹 Begin training ==============================")
     best_val_acc = 0.0
     
+    # Setup K-fold validation if enabled
+    kfold_enabled = int(os.environ.get('KFOLD_ENABLED', 0))
+    if kfold_enabled and start_epoch == 0:
+        kfold_num = int(os.environ.get('KFOLD_NUM', 5))
+        kfold_current = int(os.environ.get('KFOLD_CURRENT', 0))
+        print(f"🔹 Using K-fold validation (fold {kfold_current+1}/{kfold_num})")
+    
     for epoch in range(start_epoch, NUM_EPOCHS):
         print(f"\nEpoch {epoch+1}/{NUM_EPOCHS}")
         print("-" * 30)
         
+        # Load teacher model for self-distillation if enabled and it's time
+        if distill_criterion is not None and epoch == distill_start and teacher_model is None:
+            print("🔹 Loading teacher model for self-distillation...")
+            
+            # Try to load a checkpoint from ~30% back in training
+            if epoch >= 30:
+                teacher_epoch = max(1, epoch - 30)
+                teacher_path = f"{MODEL_PATH}_epoch_{teacher_epoch}.pth"
+                
+                if os.path.exists(teacher_path):
+                    teacher_model = create_model(device)
+                    teacher_model.load_state_dict(torch.load(teacher_path, map_location=device))
+                    teacher_model.eval()  # Set to evaluation mode
+                    print(f"✅ Loaded teacher model from epoch {teacher_epoch}")
+                else:
+                    print(f"⚠️ Teacher checkpoint not found at {teacher_path}. Disabling distillation.")
+        
         # Training phase
         train_loss, train_acc = run_training_epoch(
             model, train_loader, criterion, optimizer, device, 
-            mixup_transform, cutmix_transform, one_cycle_scheduler, scaler, epoch)
+            mixup_transform, cutmix_transform, scheduler, scaler, epoch,
+            teacher_model, distill_criterion, distill_start
+        )
         
         # Validation phase with test-time augmentation
         val_loss, val_acc = tta_evaluate(model, val_loader, criterion, device)
         
-        # Update learning rate based on validation accuracy
-        scheduler.step(val_acc)
+        # Update learning rate if using ReduceLROnPlateau
+        if not hasattr(scheduler, 'step_count'):
+            plateau_scheduler.step(val_acc)
+        
+        # Update SWA model if enabled
+        if swa is not None:
+            swa.update(epoch)
         
         # Save best model
         if val_acc > best_val_acc:
@@ -346,6 +476,26 @@ def train_model():
         if early_stopping.early_stop:
             print(f"⚠️ Early stopping triggered at epoch {epoch + 1}")
             break
+    
+    # Finalize SWA model if enabled
+    if swa is not None and swa.swa_n > 0:
+        print("🔹 Finalizing SWA model...")
+        swa_model = swa.finalize()
+        
+        # Evaluate SWA model
+        print("🔹 Evaluating SWA model...")
+        swa_val_loss, swa_val_acc = tta_evaluate(swa_model, val_loader, criterion, device)
+        print(f"✅ SWA model accuracy: {swa_val_acc:.2f}% (vs best: {best_val_acc:.2f}%)")
+        
+        # Save SWA model if it's better
+        if swa_val_acc > best_val_acc:
+            swa_model_path = f"{MODEL_PATH}_swa.pth"
+            torch.save(swa_model.state_dict(), swa_model_path)
+            print(f"✅ SWA model saved with improved accuracy: {swa_val_acc:.2f}%")
+            
+            # Update best model if SWA is better
+            torch.save(swa_model.state_dict(), MODEL_PATH)
+            best_val_acc = swa_val_acc
     
     print(f"✅ Training completed. Best validation accuracy: {best_val_acc:.2f}%")
     print(f"✅ Final Model Saved at {MODEL_PATH}\n")

@@ -550,3 +550,174 @@ def update_bn_for_large_batch(loader, model, device):
             
     print("✅ BatchNorm statistics recalibrated")
     return model
+
+
+# Add Stochastic Weight Averaging (SWA) for better generalization and convergence
+class SWA:
+    """Implements Stochastic Weight Averaging for improved generalization.
+    
+    SWA averages multiple points along the trajectory of SGD, leading to better
+    generalization than conventional training. This is particularly effective
+    in the final stages of training.
+    """
+    def __init__(self, model, swa_start=10, swa_freq=5, device=None):
+        """Initialize SWA.
+        
+        Args:
+            model: The model to apply SWA to
+            swa_start: The epoch to start SWA from
+            swa_freq: How frequently to update the SWA model (in epochs)
+            device: The device to store the SWA model on
+        """
+        self.model = model
+        self.swa_start = swa_start
+        self.swa_freq = swa_freq
+        self.device = device if device is not None else next(model.parameters()).device
+        
+        # Create a copy of the model for SWA
+        self.swa_model = self._create_swa_model()
+        self.swa_n = 0  # Counter for number of models added
+    
+    def _create_swa_model(self):
+        """Create a copy of the model for SWA with identical structure."""
+        print("🔹 Creating SWA model...")
+        
+        # For safer initialization, create an exact copy of the model
+        import copy
+        swa_model = copy.deepcopy(self.model).to(self.device)
+        
+        # Set to eval mode
+        swa_model.eval()
+        print("✅ SWA model created successfully")
+        return swa_model
+    
+    def update(self, epoch):
+        """Update the SWA model if conditions are met."""
+        if epoch >= self.swa_start and (epoch - self.swa_start) % self.swa_freq == 0:
+            # Moving average of parameters
+            self.swa_n += 1
+            
+            # Update each parameter
+            for param_q, param_k in zip(self.model.parameters(), self.swa_model.parameters()):
+                param_k.data = (param_k.data * self.swa_n + param_q.data) / (self.swa_n + 1)
+            
+            print(f"✅ SWA model updated at epoch {epoch} (model count: {self.swa_n})")
+    
+    def finalize(self):
+        """Finalize the SWA model by properly updating batch norm statistics."""
+        if self.swa_n == 0:
+            print("⚠️ SWA model was never updated. Using original model instead.")
+            return self.model
+            
+        print("🔹 Finalizing SWA model with updated batch normalization statistics...")
+        
+        # Update batch normalization statistics in the SWA model
+        self.swa_model.train()
+        
+        # Create a hook to accumulate batch norm statistics
+        def update_bn(model, loader, device):
+            momenta = {}
+            for module in model.modules():
+                if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+                    module.running_mean = torch.zeros_like(module.running_mean)
+                    module.running_var = torch.ones_like(module.running_var)
+                    momenta[module] = module.momentum
+                    module.momentum = None
+                    module.num_batches_tracked *= 0
+            
+            # Update the statistics for each batch
+            from config import BATCH_SIZE
+            n = 0
+            with torch.no_grad():
+                for images, _ in loader:
+                    images = images.to(device)
+                    b = images.size(0)
+                    
+                    momentum = b / float(n + b)
+                    for module in momenta.keys():
+                        module.momentum = momentum
+                    
+                    model(images)
+                    n += b
+            
+            # Restore momentum values
+            for module, momentum in momenta.items():
+                module.momentum = momentum
+        
+        # We need a loader to update BN statistics
+        try:
+            # Try to get the training loader from config
+            from config import TRAIN_PATH, TEST_PATH, BATCH_SIZE
+            from model_utils import prepare_dataloaders
+            train_loader, _ = prepare_dataloaders(TRAIN_PATH, TEST_PATH)
+            
+            # Use a subset of the training data to update BN statistics
+            update_bn(self.swa_model, train_loader, self.device)
+        except Exception as e:
+            print(f"⚠️ Error updating batch norm statistics: {e}")
+            print("⚠️ SWA model may have incorrect batch norm statistics.")
+        
+        self.swa_model.eval()
+        print("✅ SWA model finalized")
+        return self.swa_model
+
+
+# Add a function to create learning rate scheduler with cosine annealing and restarts
+def create_lr_scheduler(optimizer, train_loader, scheduler_type="cosine", **kwargs):
+    """Create a learning rate scheduler based on the specified type.
+    
+    Args:
+        optimizer: The optimizer to schedule
+        train_loader: The training data loader
+        scheduler_type: The type of scheduler to use
+        **kwargs: Additional arguments for specific schedulers
+    
+    Returns:
+        The learning rate scheduler
+    """
+    from config import NUM_EPOCHS, PATIENCE, FACTOR
+    
+    if scheduler_type == "cosine":
+        # Simple cosine annealing
+        return optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, 
+            T_max=NUM_EPOCHS,
+            eta_min=1e-6
+        )
+    elif scheduler_type == "cosine_restart":
+        # Cosine annealing with warm restarts
+        cycles = kwargs.get("cosine_cycles", 3)
+        cycle_length = NUM_EPOCHS // cycles
+        return optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer,
+            T_0=cycle_length,  # First restart
+            T_mult=1,          # Keep same cycle length
+            eta_min=1e-6
+        )
+    elif scheduler_type == "plateau":
+        # Reduce on plateau (default)
+        return optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, 
+            mode='max', 
+            factor=FACTOR, 
+            patience=PATIENCE, 
+            verbose=True
+        )
+    elif scheduler_type == "step":
+        # Step LR
+        step_size = kwargs.get("step_size", 30)
+        gamma = kwargs.get("gamma", 0.1)
+        return optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=step_size,
+            gamma=gamma
+        )
+    else:
+        # Default to ReduceLROnPlateau
+        return optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, 
+            mode='max', 
+            factor=FACTOR, 
+            patience=PATIENCE, 
+            verbose=True
+        )

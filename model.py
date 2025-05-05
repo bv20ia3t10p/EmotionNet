@@ -563,3 +563,278 @@ def check_layers_bias(model):
                 no_bias_layers.append(f"{name} ({type(module).__name__})")
     
     return no_bias_layers
+
+
+# Add knowledge distillation loss for self-distillation from teacher models
+class DistillationLoss(nn.Module):
+    """Implements knowledge distillation loss for transferring knowledge from a teacher model."""
+    def __init__(self, alpha=0.5, temperature=2.0):
+        """Initialize DistillationLoss.
+        
+        Args:
+            alpha: Weight of the distillation loss versus regular loss (0-1)
+            temperature: Temperature for softening probability distributions
+        """
+        super(DistillationLoss, self).__init__()
+        self.alpha = alpha
+        self.temperature = temperature
+        self.criterion = nn.KLDivLoss(reduction='batchmean')
+    
+    def forward(self, student_logits, teacher_logits, labels=None, criterion=None):
+        """Forward pass for distillation loss.
+        
+        Args:
+            student_logits: Output logits from student model
+            teacher_logits: Output logits from teacher model
+            labels: Ground truth labels (optional)
+            criterion: Regular criterion for task-specific loss (optional)
+            
+        Returns:
+            Combined loss of distillation and task-specific loss
+        """
+        # Apply temperature scaling
+        soft_student = F.log_softmax(student_logits / self.temperature, dim=1)
+        soft_teacher = F.softmax(teacher_logits / self.temperature, dim=1)
+        
+        # Compute KL divergence loss
+        distillation_loss = self.criterion(soft_student, soft_teacher) * (self.temperature ** 2)
+        
+        if labels is not None and criterion is not None:
+            # Combine with regular task loss
+            task_loss = criterion(student_logits, labels)
+            return self.alpha * distillation_loss + (1 - self.alpha) * task_loss
+        else:
+            # Just return distillation loss
+            return distillation_loss
+
+
+# Add ConvNeXt-based model for higher performance
+class ConvNeXtEmoteNet(nn.Module):
+    """Implements an emotion recognition model based on ConvNeXt architecture."""
+    def __init__(self, backbone="convnext_base", pretrained=True):
+        super(ConvNeXtEmoteNet, self).__init__()
+        from config import NUM_CLASSES, HEAD_DROPOUT, FEATURE_DROPOUT, IMAGE_SIZE
+        
+        # Use channels_last format for better GPU performance if available
+        self.channels_last = torch.cuda.is_available()
+        
+        # Load ConvNeXt backbone
+        self.backbone = timm.create_model(
+            backbone, 
+            pretrained=pretrained,
+            num_classes=0,  # Remove classifier
+            global_pool=''   # Remove pooling
+        )
+        
+        # Enable gradient checkpointing for memory efficiency
+        if hasattr(self.backbone, 'set_grad_checkpointing'):
+            self.backbone.set_grad_checkpointing(True)
+        
+        # Get feature dimensions based on backbone
+        if 'tiny' in backbone:
+            feature_dim = 768
+        elif 'small' in backbone:
+            feature_dim = 768
+        elif 'base' in backbone:
+            feature_dim = 1024
+        else:  # large
+            feature_dim = 1536
+        
+        # Use ECA attention for better feature focus
+        self.attention = ECABlock(feature_dim)
+        
+        # Feature refinement layer
+        self.extra_conv = nn.Sequential(
+            nn.Conv2d(feature_dim, 1024, kernel_size=1),
+            nn.BatchNorm2d(1024),
+            nn.GELU(),  # GELU for ConvNeXt compatibility
+            nn.Dropout2d(FEATURE_DROPOUT)
+        )
+        
+        # Global pooling
+        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.global_max_pool = nn.AdaptiveMaxPool2d((1, 1))
+        
+        # Dropout for regularization
+        self.dropout = nn.Dropout(HEAD_DROPOUT)
+        
+        # Classification head with Layer Normalization (for ConvNeXt compatibility)
+        self.classifier = nn.Sequential(
+            nn.Linear(1024 * 2, 512),
+            nn.LayerNorm(512),
+            nn.GELU(),
+            nn.Dropout(HEAD_DROPOUT),
+            
+            nn.Linear(512, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Dropout(HEAD_DROPOUT * 0.8),
+            
+            nn.Linear(256, NUM_CLASSES)
+        )
+        
+        # Initialize weights
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        # Initialize the new layers we added
+        for m in [self.attention, self.extra_conv, self.classifier]:
+            for layer in m.modules():
+                if isinstance(layer, nn.Conv2d):
+                    nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
+                    if layer.bias is not None:
+                        nn.init.zeros_(layer.bias)
+                elif isinstance(layer, (nn.BatchNorm2d, nn.LayerNorm)):
+                    nn.init.ones_(layer.weight)
+                    if layer.bias is not None:
+                        nn.init.zeros_(layer.bias)
+                elif isinstance(layer, nn.Linear):
+                    # Use specialized initialization for final layer
+                    if layer == list(self.classifier.modules())[-1]:
+                        nn.init.normal_(layer.weight, 0, 0.001)
+                    else:
+                        nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
+                    if layer.bias is not None:
+                        nn.init.zeros_(layer.bias)
+    
+    def forward(self, x):
+        # Use channels_last format for better performance
+        if self.channels_last and torch.cuda.is_available():
+            x = x.contiguous(memory_format=torch.channels_last)
+        
+        # Extract features
+        features = self.backbone(x)
+        
+        # Apply attention and refinement
+        features = self.attention(features)
+        features = self.extra_conv(features)
+        
+        # Global pooling
+        avg_pool = self.global_avg_pool(features).view(features.size(0), -1)
+        max_pool = self.global_max_pool(features).view(features.size(0), -1)
+        x = torch.cat([avg_pool, max_pool], dim=1)
+        
+        # Apply dropout and classification
+        x = self.dropout(x)
+        x = self.classifier(x)
+        
+        return x
+
+
+# Add enhanced Vision Transformer model with hierarchical structure for better performance
+class HierarchicalViT(nn.Module):
+    """Implements a hierarchical Vision Transformer for emotion recognition."""
+    def __init__(self, backbone="vit_base_patch16_224", pretrained=True):
+        super(HierarchicalViT, self).__init__()
+        from config import NUM_CLASSES, HEAD_DROPOUT
+        
+        # Use channels_last format for better GPU performance if available
+        self.channels_last = torch.cuda.is_available()
+        
+        # Load ViT backbone
+        self.backbone = timm.create_model(
+            backbone, 
+            pretrained=pretrained,
+            num_classes=0,  # Remove classifier
+        )
+        
+        # Enable gradient checkpointing
+        if hasattr(self.backbone, 'set_grad_checkpointing'):
+            self.backbone.set_grad_checkpointing(True)
+        
+        # Get feature dimension
+        feature_dim = self.backbone.num_features
+        
+        # Create multi-scale token pooling for hierarchical feature extraction
+        self.token_pool = nn.ModuleList([
+            nn.Sequential(
+                nn.LayerNorm(feature_dim),
+                nn.Linear(feature_dim, feature_dim // 2),
+                nn.GELU()
+            ),
+            nn.Sequential(
+                nn.LayerNorm(feature_dim),
+                nn.Linear(feature_dim, feature_dim // 2),
+                nn.GELU()
+            ),
+            nn.Sequential(
+                nn.LayerNorm(feature_dim),
+                nn.Linear(feature_dim, feature_dim // 2),
+                nn.GELU()
+            )
+        ])
+        
+        # Enhanced classifier head with hierarchical features
+        self.classifier = nn.Sequential(
+            nn.LayerNorm(feature_dim // 2 * 3),  # Combined features from all levels
+            nn.Linear(feature_dim // 2 * 3, 512),
+            nn.GELU(),
+            nn.Dropout(HEAD_DROPOUT),
+            
+            nn.LayerNorm(512),
+            nn.Linear(512, 256),
+            nn.GELU(),
+            nn.Dropout(HEAD_DROPOUT * 0.8),
+            
+            nn.Linear(256, NUM_CLASSES)
+        )
+        
+        # Initialize
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        # Initialize new layers
+        for m in list(self.token_pool) + [self.classifier]:
+            for layer in m.modules():
+                if isinstance(layer, nn.Linear):
+                    if layer == list(self.classifier.modules())[-1]:
+                        # Final classification layer
+                        nn.init.normal_(layer.weight, 0, 0.001)
+                    else:
+                        # Hidden layers
+                        nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
+                    if layer.bias is not None:
+                        nn.init.zeros_(layer.bias)
+    
+    def extract_hierarchical_features(self, x):
+        """Extract hierarchical features from different levels of the transformer."""
+        # Get all token embeddings (not just CLS token)
+        if hasattr(self.backbone, 'forward_features'):
+            features = self.backbone.forward_features(x)
+        else:
+            features = self.backbone(x)
+        
+        # For ViT models, tensor shape should be [batch_size, num_tokens, embedding_dim]
+        if len(features.shape) == 3:
+            batch_size, num_tokens, embedding_dim = features.shape
+            
+            # Extract tokens from different positions for hierarchical features
+            # Use class token, and tokens at 1/3 and 2/3 of sequence
+            cls_token = features[:, 0]  # CLS token
+            mid_token = features[:, num_tokens // 3]  # Token at 1/3
+            late_token = features[:, 2 * num_tokens // 3]  # Token at 2/3
+            
+            # Process each level with separate projection
+            cls_features = self.token_pool[0](cls_token)
+            mid_features = self.token_pool[1](mid_token)
+            late_features = self.token_pool[2](late_token)
+            
+            # Combine features from different levels
+            hierarchical_features = torch.cat([cls_features, mid_features, late_features], dim=1)
+            return hierarchical_features
+        else:
+            # Fallback for non-transformer models
+            return features
+    
+    def forward(self, x):
+        # Use channels_last format for better performance
+        if self.channels_last and torch.cuda.is_available():
+            x = x.contiguous(memory_format=torch.channels_last)
+        
+        # Extract hierarchical features
+        features = self.extract_hierarchical_features(x)
+        
+        # Apply classification head
+        x = self.classifier(features)
+        
+        return x
