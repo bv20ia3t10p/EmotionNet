@@ -11,6 +11,7 @@ import time
 import numpy as np # type: ignore
 from torch.cuda.amp import autocast, GradScaler # type: ignore
 import torch.nn.functional as F # type: ignore
+from config import *
 from tqdm import tqdm # type: ignore
 
 
@@ -377,24 +378,15 @@ def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_
 def create_model(device):
     """Create and initialize the model based on configuration."""
     
-    if MODEL_TYPE == "ResEmoteNet":
-        print("🔹 Creating ResEmoteNet model")
-        model = ResEmoteNet().to(device)
-    elif MODEL_TYPE == "AdvancedEmoteNet":
-        print(f"🔹 Creating AdvancedEmoteNet model with {BACKBONE} backbone")
-        model = AdvancedEmoteNet(backbone=BACKBONE, pretrained=PRETRAINED).to(device)
-    elif MODEL_TYPE == "EmotionViT":
+    if MODEL_TYPE == "EmotionViT":
         print(f"🔹 Creating EmotionViT model with {BACKBONE} backbone")
         model = EmotionViT(backbone=BACKBONE, pretrained=PRETRAINED).to(device)
-    elif MODEL_TYPE == "HierarchicalViT":
-        print(f"🔹 Creating HierarchicalViT model with {BACKBONE} backbone")
-        model = HierarchicalViT(backbone=BACKBONE, pretrained=PRETRAINED).to(device)
     elif MODEL_TYPE == "ConvNeXtEmoteNet":
         print(f"🔹 Creating ConvNeXtEmoteNet model with {BACKBONE} backbone")
         model = ConvNeXtEmoteNet(backbone=BACKBONE, pretrained=PRETRAINED).to(device)
     else:
-        print("⚠️ Unknown model type, defaulting to AdvancedEmoteNet")
-        model = AdvancedEmoteNet(backbone=BACKBONE, pretrained=PRETRAINED).to(device)
+        print("⚠️ Unknown model type, defaulting to ConvNeXtEmoteNet")
+        model = ConvNeXtEmoteNet(backbone=BACKBONE, pretrained=PRETRAINED).to(device)
     
     return model
 
@@ -416,10 +408,11 @@ def train_model():
     start_epoch = RESUME_EPOCH if RESUME_EPOCH else 0
     model = resume_model(device, model)
     
-    # Apply large batch normalization handling if enabled
-    if int(os.environ.get('LARGE_BATCH_BN', 0)) and BATCH_SIZE >= 64:
-        from model_utils import update_bn_for_large_batch
-        model = update_bn_for_large_batch(train_loader, model, device)
+    # Apply large batch normalization handling - force enable for batch size >= 64
+    # This is critical with batch size ~200 to ensure proper batch norm statistics
+    print(f"🔹 Using large batch size ({BATCH_SIZE}), applying BatchNorm recalibration...")
+    from model_utils import update_bn_for_large_batch
+    model = update_bn_for_large_batch(train_loader, model, device)
     
     # Enhanced transforms with stronger augmentation
     mixup_transform = MixupTransform(alpha=MIXUP_ALPHA)
@@ -514,12 +507,3 @@ def train_model():
     # Final evaluation with ensemble of best checkpoints
     print("🔹 Performing final ensemble evaluation...")
     ensemble_evaluate(device, val_loader, criterion)
-
-
-# Context manager for conditional execution
-class nullcontext:
-    def __enter__(self):
-        return None
-    
-    def __exit__(self, exc_type, exc_value, traceback):
-        pass

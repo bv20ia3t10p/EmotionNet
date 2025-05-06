@@ -15,15 +15,13 @@ def load_model(model_path, device):
     print(f"🔹 Loading model from {model_path}")
     
     # Create model based on MODEL_TYPE environment variable
-    if MODEL_TYPE == "ResEmoteNet":
-        model = ResEmoteNet().to(device)
-    elif MODEL_TYPE == "AdvancedEmoteNet":
-        model = AdvancedEmoteNet(backbone=BACKBONE, pretrained=False).to(device)
-    elif MODEL_TYPE == "EmotionViT":
+    if MODEL_TYPE == "EmotionViT":
         model = EmotionViT(backbone=BACKBONE, pretrained=False).to(device)
+    elif MODEL_TYPE == "ConvNeXtEmoteNet":
+        model = ConvNeXtEmoteNet(backbone=BACKBONE, pretrained=False).to(device)
     else:
-        print(f"⚠️ Unknown model type: {MODEL_TYPE}, defaulting to AdvancedEmoteNet")
-        model = AdvancedEmoteNet(backbone=BACKBONE, pretrained=False).to(device)
+        print(f"⚠️ Unknown model type: {MODEL_TYPE}, defaulting to ConvNeXtEmoteNet")
+        model = ConvNeXtEmoteNet(backbone=BACKBONE, pretrained=False).to(device)
     
     # Load state dict
     try:

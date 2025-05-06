@@ -1,35 +1,64 @@
 #!/bin/bash
+#==============================================================================
+# Emotion Recognition Model Testing Script
+# 
+# This script runs inference using trained emotion recognition models.
+# It automatically detects whether to use EmotionViT or ConvNeXtEmoteNet models
+# based on the model file name.
+#==============================================================================
 
-# Set environment variables for testing
+echo "Setting up emotion recognition model testing environment..."
+
+#==============================================================================
+# BASIC CONFIGURATION
+#==============================================================================
 export ROOT="./extracted"
 export DATASET_PATH="${ROOT}/emotion"
-export TTA_NUM_AUGMENTS="8"     # Increased TTA augmentations for better accuracy
-export USE_RANDOM_ERASING="0"   # Disable erasing for testing
-export IMAGE_SIZE="260"         # Match the training image size
+export IMAGE_SIZE="224"                # Standard image size for both models
+export BATCH_SIZE="192"                # Use same large batch size as training for efficient evaluation
+export TTA_NUM_AUGMENTS="10"           # Test-time augmentation count for robust predictions
 
+#==============================================================================
+# MODEL SELECTION
+#==============================================================================
 # Get model path from argument or use default
 MODEL_PATH=${1:-"${ROOT}/model.pth"}
 export MODEL_PATH=$MODEL_PATH
 
 # Infer model type from filename
-if [[ $MODEL_PATH == *"high_accuracy"* ]]; then
-    export MODEL_TYPE="AdvancedEmoteNet"
-    export BACKBONE="efficientnet_b2"
-    export IMAGE_SIZE="260"
+if [[ $MODEL_PATH == *"convnext"* ]]; then
+    export MODEL_TYPE="ConvNeXtEmoteNet"
+    export BACKBONE="convnext_base"
+    MODEL_NAME="ConvNeXtEmoteNet"
 elif [[ $MODEL_PATH == *"vit"* ]]; then
     export MODEL_TYPE="EmotionViT"
     export BACKBONE="vit_base_patch16_224"
-    export IMAGE_SIZE="224"
+    MODEL_NAME="EmotionViT"
 else
-    # Default model configuration
-    export MODEL_TYPE="AdvancedEmoteNet"
-    export BACKBONE="efficientnet_b2"
-    export IMAGE_SIZE="260"
+    # Default to ConvNeXtEmoteNet if model type can't be inferred
+    echo "⚠️ Could not determine model type from filename, defaulting to ConvNeXtEmoteNet"
+    export MODEL_TYPE="ConvNeXtEmoteNet"
+    export BACKBONE="convnext_base" 
+    MODEL_NAME="ConvNeXtEmoteNet"
 fi
 
-echo "Testing model: $MODEL_PATH"
-echo "Model type: $MODEL_TYPE with $BACKBONE backbone"
-echo "Image size: ${IMAGE_SIZE}px, TTA augmentations: $TTA_NUM_AUGMENTS"
+#==============================================================================
+# TESTING SETTINGS
+#==============================================================================
+export TTA_ENABLED="1"                 # Enable test-time augmentation for better results
 
-# Run the test script
-python3 main.py --mode test --model_path $MODEL_PATH 
+#==============================================================================
+# SUMMARY
+#==============================================================================
+echo "=== Emotion Recognition Model Test Configuration ==="
+echo "Model: ${MODEL_NAME} with ${BACKBONE}"
+echo "Model Path: ${MODEL_PATH}"
+echo "Dataset: ${DATASET_PATH}/test"
+echo "Test-Time Augmentation: Enabled (${TTA_NUM_AUGMENTS} augmentations)"
+echo "=================================================="
+
+#==============================================================================
+# START TESTING
+#==============================================================================
+echo "Starting evaluation of ${MODEL_NAME}..."
+python3 main.py --mode test 

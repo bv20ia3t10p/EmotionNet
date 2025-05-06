@@ -28,9 +28,6 @@ if __name__ == "__main__":
         # Log class distribution to identify imbalance
         train_stats = get_image_stats(TRAIN_PATH)
         
-        # Ensure balanced classes for training
-        ensure_images_per_class(TRAIN_PATH, 7500)
-        
         # Start training
         train_model()
     

@@ -2,16 +2,12 @@ from config import *
 from utils import *
 import torch  # type: ignore
 from torchvision import transforms, datasets  # type: ignore
-from torch.utils.data import DataLoader  # type: ignore
 import numpy as np  # type: ignore
 import random
-import torch.nn.functional as F # type: ignore
 import os
-from model import ResEmoteNet
 import torch.nn as nn # type: ignore
 import torch.optim as optim # type: ignore
-from torch.cuda.amp import autocast, GradScaler # type: ignore
-import math
+from config import *
 from collections import defaultdict
 
 
@@ -526,7 +522,9 @@ def update_bn_for_large_batch(loader, model, device):
     This improves performance when using large batches by estimating
     better statistics for batch normalization layers.
     """
-    if not int(os.environ.get('LARGE_BATCH_BN', 0)):
+    # Force enable for large batch sizes
+    if BATCH_SIZE < 64:
+        print("ℹ️ BatchNorm recalibration skipped for small batch size")
         return model
         
     print("🔹 Recalibrating BatchNorm statistics for large batch training...")
@@ -539,8 +537,11 @@ def update_bn_for_large_batch(loader, model, device):
             m.momentum = 0.1  # Default PyTorch momentum
             m.training = True  # Set to training mode to update stats
     
-    # Use a subset of the dataset to recalibrate
-    num_batches = min(100, len(loader))
+    # Use more batches for recalibration with larger batch sizes
+    recalibration_batches = 50 if BATCH_SIZE <= 64 else 25
+    num_batches = min(recalibration_batches, len(loader))
+    print(f"   Using {num_batches} batches for BatchNorm recalibration")
+    
     with torch.no_grad():
         for i, (inputs, _) in enumerate(loader):
             if i >= num_batches:
@@ -548,7 +549,7 @@ def update_bn_for_large_batch(loader, model, device):
             inputs = inputs.to(device)
             outputs = model(inputs)
             
-    print("✅ BatchNorm statistics recalibrated")
+    print("✅ BatchNorm statistics recalibrated for large batch training")
     return model
 
 
