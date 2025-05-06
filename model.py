@@ -1,8 +1,8 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch # type: ignore
+import torch.nn as nn # type: ignore
+import torch.nn.functional as F # type: ignore
 from config import *
-import timm
+import timm # type: ignore
 import math
 import os
 

@@ -77,17 +77,13 @@ export SWA_FREQ="5"                 # SWA model update frequency (epochs)
 export SWA_LR="0.00001"             # SWA learning rate
 
 # Feature consistency and self-distillation
-export FEATURE_CONSISTENCY_LAMBDA="0.2"  # Weight for feature consistency loss
-export FEATURE_CONSISTENCY_ENABLED="1"   # Enable feature consistency regularization
-export SELF_DISTILLATION_ENABLED="1"     # Enable self-distillation from earlier checkpoints
-export SELF_DISTILLATION_TEMP="2.0"      # Temperature for knowledge distillation
-export SELF_DISTILLATION_ALPHA="0.3"     # Weight for distillation loss
-export SELF_DISTILLATION_START="100"     # Start epoch for self-distillation
-
-# Cross-fold validation for robustness
-export KFOLD_ENABLED="1"            # Enable K-fold validation
-export KFOLD_NUM="5"                # Number of folds
-export KFOLD_CURRENT="0"            # Current fold (0-based index)
+export FEATURE_CONSISTENCY_LAMBDA="0.2"           # Weight for feature consistency loss
+export FEATURE_CONSISTENCY_ENABLED="1"            # Enable feature consistency regularization
+export SELF_DISTILLATION_ENABLED="1"              # Enable self-distillation from earlier checkpoints
+export SELF_DISTILLATION_TEMP="2.0"               # Temperature for knowledge distillation
+export SELF_DISTILLATION_ALPHA="0.3"              # Weight for distillation loss
+export SELF_DISTILLATION_START="100"              # Start epoch for self-distillation
+export SELF_DISTILLATION_MODEL_PATH="${MODEL_PATH}_epoch_50.pth"  # Path to teacher model (epoch 50 checkpoint)
 
 # Run the training script with ultra-high accuracy configuration
 echo "🔹 Starting ULTRA-high-accuracy training with OPTIMIZED parameters..."

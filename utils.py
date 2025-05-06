@@ -7,7 +7,7 @@ from PIL import Image, ImageOps, ImageFilter, ImageEnhance  # type: ignore
 import random
 import matplotlib.pyplot as plt  # type: ignore
 import math
-from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import autocast, GradScaler # type: ignore
 
 
 # Utility for tracking averages of values during training

@@ -5,12 +5,12 @@ from torchvision import transforms, datasets  # type: ignore
 from torch.utils.data import DataLoader  # type: ignore
 import numpy as np  # type: ignore
 import random
-import torch.nn.functional as F
+import torch.nn.functional as F # type: ignore
 import os
 from model import ResEmoteNet
-import torch.nn as nn
-import torch.optim as optim
-from torch.cuda.amp import autocast, GradScaler
+import torch.nn as nn # type: ignore
+import torch.optim as optim # type: ignore
+from torch.cuda.amp import autocast, GradScaler # type: ignore
 import math
 from collections import defaultdict
 

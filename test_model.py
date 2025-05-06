@@ -1,13 +1,13 @@
-import torch
+import torch # type: ignore
 import os
 import sys
 from model import *
 from model_utils import *
 from config import *
-from tqdm import tqdm
-import numpy as np
-import matplotlib.pyplot as plt
-from PIL import Image
+from tqdm import tqdm # type: ignore
+import numpy as np # type: ignore
+import matplotlib.pyplot as plt # type: ignore
+from PIL import Image # type: ignore
 
 
 def load_model(model_path, device):
@@ -146,8 +146,8 @@ def test_model():
     
     # Calculate advanced metrics if sklearn is available
     try:
-        from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score
-        import seaborn as sns
+        from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score # type: ignore
+        import seaborn as sns # type: ignore
         
         # Confusion matrix
         cm = confusion_matrix(all_targets, all_preds)

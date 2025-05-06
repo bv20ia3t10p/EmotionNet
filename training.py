@@ -8,10 +8,10 @@ from utils import *
 import os
 import random
 import time
-import numpy as np
-from torch.cuda.amp import autocast, GradScaler
-import torch.nn.functional as F
-from tqdm import tqdm
+import numpy as np # type: ignore
+from torch.cuda.amp import autocast, GradScaler # type: ignore
+import torch.nn.functional as F # type: ignore
+from tqdm import tqdm # type: ignore
 
 
 def prepare_training_components(model, train_loader):
@@ -218,10 +218,22 @@ def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_
         # Apply augmentation based on random selection and epoch-dependent probability
         rand_choice = random.random()
         
+        # Store variables needed for accuracy calculation outside the if-blocks
+        is_mixup_or_cutmix = False
+        mixup_labels_a = None
+        mixup_labels_b = None
+        mixup_lam = 0.5
+        
         with autocast() if USE_AMP else nullcontext():
             if rand_choice < mixup_probability and epoch >= 1:  # Only apply mixup after first epoch
                 mixed_images, labels_a, labels_b, lam = mixup_transform((images, labels))
                 images = mixed_images.to(device)
+                
+                # Store for accuracy calculation later
+                is_mixup_or_cutmix = True
+                mixup_labels_a = labels_a
+                mixup_labels_b = labels_b
+                mixup_lam = lam
                 
                 # Convert label indices to one-hot for mixup
                 labels_a_one_hot = F.one_hot(labels_a, NUM_CLASSES).float()
@@ -248,6 +260,12 @@ def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_
             elif rand_choice < mixup_probability + cutmix_probability and epoch >= 3:  # Only apply cutmix after third epoch
                 mixed_images, labels_a, labels_b, lam = cutmix_transform((images, labels))
                 images = mixed_images.to(device)
+                
+                # Store for accuracy calculation later
+                is_mixup_or_cutmix = True
+                mixup_labels_a = labels_a
+                mixup_labels_b = labels_b
+                mixup_lam = lam
                 
                 # Convert label indices to one-hot for cutmix
                 labels_a_one_hot = F.one_hot(labels_a, NUM_CLASSES).float()
@@ -319,14 +337,14 @@ def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_
                 if hasattr(scheduler, 'step_count'):  # OneCycleLR or CosineAnnealing*
                     scheduler.step()
         
-        # Compute accuracy
-        if (rand_choice < mixup_probability + cutmix_probability) and (epoch >= 1):
-            # For mixed batches, use the dominant label for accuracy calculation
-            _, predicted = outputs.max(1)
-            dominant_labels = labels_a if lam > 0.5 else labels_b
+        # Compute accuracy - using the stored mixup/cutmix variables
+        _, predicted = outputs.max(1)
+        if is_mixup_or_cutmix and epoch >= 1:
+            # If we used mixup/cutmix, use dominant label for accuracy
+            dominant_labels = mixup_labels_a if mixup_lam > 0.5 else mixup_labels_b
             batch_correct = predicted.eq(dominant_labels).sum().item()
         else:
-            _, predicted = outputs.max(1)
+            # Standard accuracy calculation
             batch_correct = predicted.eq(labels).sum().item()
             
         # Update metrics
@@ -416,13 +434,6 @@ def train_model():
     
     print("🔹 Begin training ==============================")
     best_val_acc = 0.0
-    
-    # Setup K-fold validation if enabled
-    kfold_enabled = int(os.environ.get('KFOLD_ENABLED', 0))
-    if kfold_enabled and start_epoch == 0:
-        kfold_num = int(os.environ.get('KFOLD_NUM', 5))
-        kfold_current = int(os.environ.get('KFOLD_CURRENT', 0))
-        print(f"🔹 Using K-fold validation (fold {kfold_current+1}/{kfold_num})")
     
     for epoch in range(start_epoch, NUM_EPOCHS):
         print(f"\nEpoch {epoch+1}/{NUM_EPOCHS}")

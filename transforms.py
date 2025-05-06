@@ -1,12 +1,6 @@
-import torch
-from torchvision import transforms
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
-import cv2
+import albumentations as A # type: ignore
+from albumentations.pytorch import ToTensorV2 # type: ignore
 from config import *
-import numpy as np
-import random
-import os
 
 # Get phase-dependent augmentation strength
 def get_phase_augmentation_params(phase=5):
