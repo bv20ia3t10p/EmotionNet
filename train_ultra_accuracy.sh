@@ -8,7 +8,7 @@ export MODEL_TYPE="EmotionViT"     # Upgraded to ViT-based architecture for high
 export BACKBONE="vit_base_patch16_224"  # Changed from large to base for compatibility
 export BATCH_SIZE="16"              # Smaller batch size for better generalization
 export ACCUMULATION_STEPS="8"       # Increased accumulation steps for effective batch size
-export LEARNING_RATE="0.00005"      # Lower learning rate for precision fine-tuning
+export LEARNING_RATE="0.00004"      # Slightly reduced learning rate to help with overfitting
 export NUM_EPOCHS="250"             # Extended training for full convergence
 export WARMUP_EPOCHS="5"            # Longer warmup for stable initialization
 export FREEZE_BACKBONE_EPOCHS="3"   # Longer freeze period for better adaptation
@@ -18,34 +18,34 @@ export IMAGE_SIZE="224"             # Fixed: Changed from 384 to 224 to match Vi
 export ENABLE_LR_FINDER="0"         # Disable LR finder
 export RESUME_EPOCH="0"             # Start from the beginning
 
-# Progressive augmentation strategy with more phases
+# Progressive augmentation strategy with more phases - start stronger augmentations sooner
 export PROGRESSIVE_AUGMENTATION="1" # Enable phase-based augmentation strategy
-export PHASE_1_EPOCHS="20"          # Phase 1: Simple augmentations only
-export PHASE_2_EPOCHS="50"          # Phase 2: Introduce intermediate augmentations
-export PHASE_3_EPOCHS="100"         # Phase 3: Full augmentation strength
-export PHASE_4_EPOCHS="180"         # Phase 4: Advanced augmentation + knowledge distillation
+export PHASE_1_EPOCHS="10"          # Phase 1: Simple augmentations only (reduced from 20)
+export PHASE_2_EPOCHS="30"          # Phase 2: Introduce intermediate augmentations (reduced from 50)
+export PHASE_3_EPOCHS="70"          # Phase 3: Full augmentation strength (reduced from 100)
+export PHASE_4_EPOCHS="120"         # Phase 4: Advanced augmentation + knowledge distillation (reduced from 180)
 
-# Enhanced augmentation settings - more aggressive approach
-export MIXUP_PROB="0.4"             # Increased mixup probability
-export CUTMIX_PROB="0.3"            # Increased cutmix probability
-export MIXUP_ALPHA="0.5"            # Stronger mixup alpha
-export CUTMIX_ALPHA="1.0"           # Stronger cutmix alpha
-export LABEL_SMOOTHING="0.1"        # Increased label smoothing factor
+# Enhanced augmentation settings - more aggressive approach to combat overfitting
+export MIXUP_PROB="0.6"             # Increased mixup probability (from 0.4)
+export CUTMIX_PROB="0.5"            # Increased cutmix probability (from 0.3)
+export MIXUP_ALPHA="0.7"            # Stronger mixup alpha (from 0.5)
+export CUTMIX_ALPHA="1.0"           # Stronger cutmix alpha (unchanged)
+export LABEL_SMOOTHING="0.2"        # Increased label smoothing factor (from 0.1)
 export USE_MIXUP="1"                # Enable mixup
 export USE_CUTMIX="1"               # Enable cutmix
 export USE_ADVANCED_AUGMENTATION="1" # Enable advanced augmentations
 
-# Reduced dropout settings for maximum representation power
-export HEAD_DROPOUT="0.1"           # Minimal dropout rate for classification head
-export FEATURE_DROPOUT="0.05"       # Minimal dropout in feature extraction
+# Increased dropout settings to combat overfitting
+export HEAD_DROPOUT="0.3"           # Increased dropout rate for classification head (from 0.1)
+export FEATURE_DROPOUT="0.15"       # Increased dropout in feature extraction (from 0.05)
 
 # Advanced augmentations - higher intensity
 export USE_RANDOM_ERASING="1"       # Enable random erasing
-export ERASING_PROB="0.2"           # Higher probability for random erasing
+export ERASING_PROB="0.35"          # Increased probability for random erasing (from 0.2)
 export USE_COLOR_JITTER="1"         # Enable color jitter
 
 # Optimization settings - precision-focused
-export WEIGHT_DECAY="0.00003"       # Finely tuned weight decay
+export WEIGHT_DECAY="0.0001"        # Increased weight decay to improve regularization (from 0.00003)
 export FOCAL_ALPHA="1.0"            # Focal loss alpha parameter
 export FOCAL_GAMMA="2.0"            # Increased gamma for harder examples
 export GRAD_CLIP_VALUE="0.5"        # Tighter gradient clipping for stability
@@ -70,23 +70,23 @@ export LOOKAHEAD_K="6"              # Increased Lookahead synchronization period
 export LOOKAHEAD_ALPHA="0.6"        # Stronger Lookahead alpha parameter
 export LARGE_BATCH_BN="1"           # Enable special batch norm handling
 
-# Stochastic Weight Averaging for final convergence
+# Stochastic Weight Averaging for final convergence - start earlier
 export SWA_ENABLED="1"              # Enable Stochastic Weight Averaging
-export SWA_START_EPOCH="150"        # Start SWA after this epoch
+export SWA_START_EPOCH="80"         # Start SWA earlier to combat overfitting (from 150)
 export SWA_FREQ="5"                 # SWA model update frequency (epochs)
 export SWA_LR="0.00001"             # SWA learning rate
 
-# Feature consistency and self-distillation
-export FEATURE_CONSISTENCY_LAMBDA="0.2"           # Weight for feature consistency loss
+# Feature consistency and self-distillation - start earlier
+export FEATURE_CONSISTENCY_LAMBDA="0.3"           # Increased weight for feature consistency loss (from 0.2)
 export FEATURE_CONSISTENCY_ENABLED="1"            # Enable feature consistency regularization
 export SELF_DISTILLATION_ENABLED="1"              # Enable self-distillation from earlier checkpoints
-export SELF_DISTILLATION_TEMP="2.0"               # Temperature for knowledge distillation
-export SELF_DISTILLATION_ALPHA="0.3"              # Weight for distillation loss
-export SELF_DISTILLATION_START="100"              # Start epoch for self-distillation
-export SELF_DISTILLATION_MODEL_PATH="${MODEL_PATH}_epoch_50.pth"  # Path to teacher model (epoch 50 checkpoint)
+export SELF_DISTILLATION_TEMP="2.5"               # Increased temperature for knowledge distillation (from 2.0)
+export SELF_DISTILLATION_ALPHA="0.4"              # Increased weight for distillation loss (from 0.3)
+export SELF_DISTILLATION_START="50"               # Start self-distillation earlier (from 100)
+export SELF_DISTILLATION_MODEL_PATH="${MODEL_PATH}_epoch_25.pth"  # Earlier teacher model (from epoch 50)
 
 # Run the training script with ultra-high accuracy configuration
-echo "🔹 Starting ULTRA-high-accuracy training with OPTIMIZED parameters..."
+echo "🔹 Starting ULTRA-high-accuracy training with ANTI-OVERFITTING parameters..."
 echo "🔹 Target: 90%+ accuracy with ViT-Base backbone"
 echo "🔹 Image size: ${IMAGE_SIZE}px, Batch size: ${BATCH_SIZE} (effective: $((BATCH_SIZE * ACCUMULATION_STEPS)))"
 echo "🔹 ADVANCED: SWA, Self-distillation, and multi-cycle cosine annealing"

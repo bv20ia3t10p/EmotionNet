@@ -149,16 +149,25 @@ def get_train_transform(phase=5):
                 height=IMAGE_SIZE, 
                 width=IMAGE_SIZE, 
                 scale=(params["scale"][0], params["scale"][1]), 
-                ratio=(0.75, 1.33)
+                ratio=(0.75, 1.33),
+                p=1.0
             ),
             A.Sequential([
                 A.Resize(int(IMAGE_SIZE * 1.1), int(IMAGE_SIZE * 1.1)),
                 A.RandomCrop(height=IMAGE_SIZE, width=IMAGE_SIZE)
-            ]),
+            ], p=1.0),
+            # Add more aggressive crops for stronger regularization
+            A.Sequential([
+                A.Resize(int(IMAGE_SIZE * 1.25), int(IMAGE_SIZE * 1.25)),
+                A.RandomSizedCrop(min_max_height=(int(IMAGE_SIZE * 0.8), IMAGE_SIZE), 
+                                  height=IMAGE_SIZE, width=IMAGE_SIZE, 
+                                  w2h_ratio=1.0)
+            ], p=0.3 if phase >= 2 else 0.0),
         ], p=params["spatial_prob"]),
         
         # Basic augmentations - always applied with varying probabilities
         A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.1 if phase == 1 else 0.2),  # Increased for higher phases
         A.ShiftScaleRotate(
             shift_limit=0.1, 
             scale_limit=0.2, 
@@ -166,7 +175,7 @@ def get_train_transform(phase=5):
             p=0.7
         ),
         
-        # Color transforms - medium probability
+        # Color transforms - medium probability - stronger for higher phases
         A.OneOf([
             A.RandomBrightnessContrast(
                 brightness_limit=params["brightness_contrast_limit"], 
@@ -183,60 +192,73 @@ def get_train_transform(phase=5):
                 saturation=0.2, 
                 hue=0.05
             ),
-            A.CLAHE(clip_limit=4.0, p=0.5)
-        ], p=0.7),
+            A.CLAHE(clip_limit=4.0, p=0.5),
+            # Add more aggressive color transforms for phase 2+
+            A.RGBShift(r_shift_limit=30, g_shift_limit=30, b_shift_limit=30, p=1.0)
+        ], p=0.7 if phase == 1 else 0.85),
         
-        # Noise transforms - lower probability
+        # Noise transforms - increased probability for higher phases
         A.OneOf([
             A.GaussNoise(var_limit=(10.0, 50.0)),
             A.MultiplicativeNoise(multiplier=(0.9, 1.1)),
             A.ISONoise(color_shift=(0.01, 0.05), intensity=(0.1, 0.5)),
-        ], p=params["noise_prob"]),
+            # Add stronger noise for phase 3+
+            A.ImageCompression(quality_lower=60, quality_upper=100, p=1.0 if phase >= 3 else 0.0)
+        ], p=params["noise_prob"] * (1.0 if phase == 1 else 1.5)),
         
-        # Blur transforms - lower probability
+        # Blur transforms - increased for higher phases
         A.OneOf([
             A.MotionBlur(blur_limit=7),
             A.MedianBlur(blur_limit=5),
             A.GaussianBlur(blur_limit=5),
             A.GlassBlur(sigma=0.7, max_delta=2),
-        ], p=params["blur_prob"]),
+            # Add stronger blur for phase 3+
+            A.ZoomBlur(max_factor=1.3, p=1.0 if phase >= 3 else 0.0)
+        ], p=params["blur_prob"] * (1.0 if phase == 1 else 1.3)),
         
-        # Distortion transforms - lower probability
+        # Distortion transforms - increased for higher phases
         A.OneOf([
             A.GridDistortion(num_steps=5, distort_limit=0.3),
             A.ElasticTransform(alpha=1, sigma=50, alpha_affine=50),
             A.OpticalDistortion(distort_limit=0.3, shift_limit=0.1),
             A.Perspective(scale=(0.05, 0.1)),
-        ], p=params["distortion_prob"]),
+            # Add more aggressive distortions for phase 3+
+            A.GridDropout(ratio=0.3, holes_number_x=5, holes_number_y=5, p=1.0 if phase >= 3 else 0.0)
+        ], p=params["distortion_prob"] * (1.0 if phase == 1 else 1.5)),
         
-        # Advanced augmentations - phase-dependent probability
+        # Advanced augmentations - phase-dependent probability, stronger for higher phases
         A.CoarseDropout(
-            max_holes=8, 
-            max_height=IMAGE_SIZE//8, 
-            max_width=IMAGE_SIZE//8, 
+            max_holes=10 if phase >= 3 else 8, 
+            max_height=IMAGE_SIZE//7 if phase >= 3 else IMAGE_SIZE//8, 
+            max_width=IMAGE_SIZE//7 if phase >= 3 else IMAGE_SIZE//8, 
             min_holes=1, 
             min_height=IMAGE_SIZE//16, 
             min_width=IMAGE_SIZE//16, 
-            p=params["cutout_prob"]
+            p=params["cutout_prob"] * (1.0 if phase == 1 else 1.5)
         ),
+        
+        # Stronger random erasing for phase 2+
+        A.ToGray(p=0.1 if phase >= 2 else 0.0),  # Occasionally convert to grayscale
+        
+        # Ensure we do mixup/cutmix via the training loop rather than here
+        
         A.RandomGamma(gamma_limit=(80, 120), p=params["random_gamma_prob"]),
         A.RandomShadow(
             shadow_roi=(0, 0, 1, 1), 
             num_shadows_lower=1, 
-            num_shadows_upper=2, 
+            num_shadows_upper=3 if phase >= 3 else 2,  # More shadows for higher phases
             p=params["random_shadow_prob"]
         ),
         A.PiecewiseAffine(scale=(0.01, 0.03), p=params["elastic_prob"]),
         A.ChannelShuffle(p=params["channel_shuffle_prob"]),
         
-        # These transforms require open-cv extras - only use if available
-        # We wrap them in try/except to avoid errors
+        # Weather augmentations - stronger for higher phases
         A.OneOf([
             A.RandomFog(fog_coef_lower=0.1, fog_coef_upper=0.3, alpha_coef=0.1),
-            A.RandomRain(drop_length=10, blur_value=3, brightness_coefficient=0.9),
+            A.RandomRain(drop_length=20 if phase >= 3 else 10, blur_value=3, brightness_coefficient=0.9),
             A.RandomSnow(snow_point_lower=0.1, snow_point_upper=0.3, brightness_coeff=0.9),
             A.RandomSunFlare(flare_roi=(0, 0, 1, 0.5), angle_lower=0, angle_upper=1),
-        ], p=params["random_fog_prob"]),
+        ], p=params["random_fog_prob"] * (1.0 if phase == 1 else 2.0)),
         
         # Final normalization
         A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
