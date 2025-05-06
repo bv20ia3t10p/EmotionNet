@@ -106,7 +106,7 @@ HEAD_DROPOUT = float(os.environ.get('HEAD_DROPOUT', 0.35))
 FEATURE_DROPOUT = float(os.environ.get('FEATURE_DROPOUT', 0.15))
 
 # Gradient clipping for stability
-GRAD_CLIP_VALUE = float(os.getenv("GRAD_CLIP_VALUE", 1.0))
+GRAD_CLIP_VALUE = float(os.getenv("GRAD_CLIP_VALUE", 0.5))
 
 # ==============================================================================
 # LEARNING RATE SCHEDULING

@@ -414,9 +414,18 @@ def train_model():
     from model_utils import update_bn_for_large_batch
     model = update_bn_for_large_batch(train_loader, model, device)
     
-    # Enhanced transforms with stronger augmentation
+    # Enhanced transforms with stronger augmentation to prevent overfitting
     mixup_transform = MixupTransform(alpha=MIXUP_ALPHA)
     cutmix_transform = CutMixTransform(alpha=CUTMIX_ALPHA)
+    
+    # Anti-overfitting message
+    print("🔹 Anti-overfitting measures:")
+    print(f"   - Weight decay: {WEIGHT_DECAY}")
+    print(f"   - Dropout rates: Head {HEAD_DROPOUT}, Feature {FEATURE_DROPOUT}")
+    print(f"   - Augmentation: MixUp {MIXUP_PROB}/{MIXUP_ALPHA}, CutMix {CUTMIX_PROB}/{CUTMIX_ALPHA}")
+    print(f"   - Label smoothing: {LABEL_SMOOTHING}")
+    print(f"   - Early stopping patience: {EARLY_STOPPING_PATIENCE}")
+    print(f"   - SWA starting at epoch: {os.environ.get('SWA_START_EPOCH', 'disabled')}")
     
     if ENABLE_LR_FINDER:
         print("🔹 Running Learning Rate Finder...")

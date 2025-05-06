@@ -28,7 +28,7 @@ export IMAGE_SIZE="224"
 # TRAINING PARAMETERS
 #==============================================================================
 export BATCH_SIZE="192"                # Large batch size for efficient training
-export LEARNING_RATE="0.0004"          # Adjusted learning rate for large batch size
+export LEARNING_RATE="0.0003"          # Slightly reduced learning rate to combat overfitting
 export NUM_EPOCHS="200"
 
 #==============================================================================
@@ -47,37 +47,37 @@ export SCHEDULER_TYPE="cosine"         # Cosine annealing scheduler
 
 # Stochastic Weight Averaging for better generalization
 export SWA_ENABLED="1"
-export SWA_START_EPOCH="120"           # Start SWA later for ConvNeXt
-export SWA_FREQ="5"
+export SWA_START_EPOCH="50"            # Start SWA earlier to capture more models before overfitting
+export SWA_FREQ="3"                    # More frequent model averaging
 
 # Knowledge Distillation settings
 export SELF_DISTILLATION_ENABLED="1"
-export SELF_DISTILLATION_START="80"    # Start self-distillation later for ConvNeXt
-export SELF_DISTILLATION_TEMP="3.0"    # Higher temperature for ConvNeXt
-export SELF_DISTILLATION_ALPHA="0.5"   # Stronger distillation weight
+export SELF_DISTILLATION_START="40"    # Start self-distillation earlier to prevent overfitting
+export SELF_DISTILLATION_TEMP="4.0"    # Higher temperature for smoother probabilities
+export SELF_DISTILLATION_ALPHA="0.6"   # Stronger distillation weight
 
 #==============================================================================
 # REGULARIZATION
 #==============================================================================
-export WEIGHT_DECAY="0.0003"           # Increased weight decay for ConvNeXt
-export HEAD_DROPOUT="0.4"              # Increased dropout for classification head
-export FEATURE_DROPOUT="0.2"           # Increased feature dropout
+export WEIGHT_DECAY="0.0008"           # Increased weight decay to combat overfitting
+export HEAD_DROPOUT="0.5"              # Increased dropout for classification head
+export FEATURE_DROPOUT="0.3"           # Increased feature dropout
 
 #==============================================================================
 # LOSS FUNCTION
 #==============================================================================
 export USE_FOCAL_LOSS="1"
 export FOCAL_GAMMA="2.0"
-export LABEL_SMOOTHING="0.15"          # Increased label smoothing
-export KL_WEIGHT="0.15"                # Increased KL divergence weight
+export LABEL_SMOOTHING="0.2"           # Increased label smoothing for regularization
+export KL_WEIGHT="0.2"                 # Increased KL divergence weight
 
 #==============================================================================
 # DATA AUGMENTATION
 #==============================================================================
-export MIXUP_PROB="0.5"                # More aggressive augmentation
-export CUTMIX_PROB="0.4"
-export MIXUP_ALPHA="0.8"
-export CUTMIX_ALPHA="1.0"
+export MIXUP_PROB="0.65"               # More aggressive augmentation to combat overfitting
+export CUTMIX_PROB="0.55"              # Increased CutMix probability
+export MIXUP_ALPHA="1.0"               # Stronger mixup interpolation
+export CUTMIX_ALPHA="1.2"              # Stronger cutmix effect
 
 #==============================================================================
 # EARLY STOPPING
