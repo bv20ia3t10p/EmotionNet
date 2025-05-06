@@ -51,37 +51,37 @@ LABEL_SMOOTHING = float(os.getenv("LABEL_SMOOTHING", 0.05))  # Reduced label smo
 KL_WEIGHT = float(os.getenv("KL_WEIGHT", 0.05))  # Reduced KL divergence weight for better early training
 
 # Regularization parameters
-WEIGHT_DECAY = float(os.getenv("WEIGHT_DECAY", 0.00005))  # Reduced weight decay
-HEAD_DROPOUT = float(os.getenv("HEAD_DROPOUT", 0.2))  # Reduced dropout for classification head
-FEATURE_DROPOUT = float(os.getenv("FEATURE_DROPOUT", 0.1))  # Reduced dropout for feature extractor
+WEIGHT_DECAY = float(os.environ.get('WEIGHT_DECAY', 0.0001))  # Increased weight decay
+HEAD_DROPOUT = float(os.environ.get('HEAD_DROPOUT', 0.3))  # Increased dropout for classification head
+FEATURE_DROPOUT = float(os.environ.get('FEATURE_DROPOUT', 0.2))  # Increased dropout for feature extractor
 
 # Early stopping & gradient clipping
 EARLY_STOPPING_PATIENCE = int(os.getenv("EARLY_STOPPING_PATIENCE", 25))  # More patience
 GRAD_CLIP_VALUE = float(os.getenv("GRAD_CLIP_VALUE", 1.0))  # Clip gradients to stabilize training
 
 # Scheduler parameters
-PATIENCE = int(os.getenv("PATIENCE", 10))  # More patient LR scheduler
-FACTOR = float(os.getenv("FACTOR", 0.7))  # Gentler learning rate reduction
-LR_SCHEDULER_STEP_SIZE = int(os.getenv("LR_SCHEDULER_STEP_SIZE", 12))  # Longer interval between LR adjustments
-LR_SCHEDULER_GAMMA = float(os.getenv("LR_SCHEDULER_GAMMA", 0.8))  # Gentler gamma for LR scheduler
+PATIENCE = int(os.environ.get('PATIENCE', 8))  # Reduced patience for faster LR reduction
+FACTOR = float(os.environ.get('FACTOR', 0.5))  # More aggressive LR reduction
+LR_SCHEDULER_STEP_SIZE = int(os.environ.get('LR_SCHEDULER_STEP_SIZE', 8))  # Shorter interval between LR adjustments
+LR_SCHEDULER_GAMMA = float(os.environ.get('LR_SCHEDULER_GAMMA', 0.7))  # More aggressive gamma for LR scheduler
 
-# Data augmentation parameters (intensity reduced for stability)
-DEGREES = int(os.getenv("DEGREES", 10))  # Reduced rotation angle
-TRANSLATE = (float(os.getenv("TRANSLATE_X", 0.1)), float(os.getenv("TRANSLATE_Y", 0.1)))  # Reduced translation
-SCALE = (float(os.getenv("SCALE_MIN", 0.9)), float(os.getenv("SCALE_MAX", 1.1)))  # Reduced scaling
-SHEAR = int(os.getenv("SHEAR", 5))  # Reduced shear angle
-PERSPECTIVE_DISTORTION = float(os.getenv("PERSPECTIVE_DISTORTION", 0.2))  # Reduced perspective distortion
+# Data augmentation parameters (increased intensity)
+DEGREES = int(os.environ.get('DEGREES', 15))  # Increased rotation angle
+TRANSLATE = (float(os.environ.get('TRANSLATE_X', 0.15)), float(os.environ.get('TRANSLATE_Y', 0.15)))  # Increased translation
+SCALE = (float(os.environ.get('SCALE_MIN', 0.8)), float(os.environ.get('SCALE_MAX', 1.2)))  # Increased scaling
+SHEAR = int(os.environ.get('SHEAR', 10))  # Increased shear angle
+PERSPECTIVE_DISTORTION = float(os.environ.get('PERSPECTIVE_DISTORTION', 0.3))  # Increased perspective distortion
 
-# Color augmentation parameters (reduced intensity)
-BRIGHTNESS = float(os.getenv("BRIGHTNESS", 0.1))  # Reduced brightness adjustment
-CONTRAST = float(os.getenv("CONTRAST", 0.1))  # Reduced contrast adjustment
-SATURATION = float(os.getenv("SATURATION", 0.1))  # Reduced saturation adjustment
-HUE = float(os.getenv("HUE", 0.05))  # Reduced hue adjustment
+# Color augmentation parameters (increased intensity)
+BRIGHTNESS = float(os.environ.get('BRIGHTNESS', 0.2))  # Increased brightness adjustment
+CONTRAST = float(os.environ.get('CONTRAST', 0.2))  # Increased contrast adjustment
+SATURATION = float(os.environ.get('SATURATION', 0.2))  # Increased saturation adjustment
+HUE = float(os.environ.get('HUE', 0.1))  # Increased hue adjustment
 
 # More advanced augmentation options
-USE_RANDOM_ERASING = int(os.getenv("USE_RANDOM_ERASING", 1)) == 1
-ERASING_PROB = float(os.getenv("ERASING_PROB", 0.1))  # Reduced erasing probability
-USE_COLOR_JITTER = int(os.getenv("USE_COLOR_JITTER", 1)) == 1
+USE_RANDOM_ERASING = int(os.environ.get('USE_RANDOM_ERASING', 1)) == 1
+ERASING_PROB = float(os.environ.get('ERASING_PROB', 0.2))  # Increased erasing probability
+USE_COLOR_JITTER = int(os.environ.get('USE_COLOR_JITTER', 1)) == 1
 
 # Test time augmentation (TTA) parameters
 TTA_ENABLED = int(os.getenv("TTA_ENABLED", 1)) == 1
