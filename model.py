@@ -378,35 +378,71 @@ class FocalLoss(nn.Module):
 
 
 class CombinedLoss(nn.Module):
-    """Combined loss function with focal loss and KL divergence regularization.
-    
-    Args:
-        alpha: Focal loss alpha parameter
-        gamma: Focal loss gamma parameter
-        class_weights: Optional class weights
-        label_smoothing: Label smoothing factor
-        kl_weight: Weight for KL divergence term
+    """
+    Combined loss function with:
+    1. Focal loss for handling class imbalance
+    2. Label smoothing for regularization
+    3. KL divergence for soft targets
     """
     def __init__(self, alpha=1.0, gamma=2.0, class_weights=None, label_smoothing=0.1, kl_weight=0.1):
         super(CombinedLoss, self).__init__()
-        self.focal_loss = FocalLoss(alpha, gamma, class_weights, label_smoothing)
+        self.alpha = alpha
+        self.gamma = gamma  # Higher gamma means more focus on hard examples
+        self.label_smoothing = label_smoothing
         self.kl_weight = kl_weight
+        
+        # Setup class weights for handling class imbalance
+        if class_weights is not None:
+            self.class_weights = torch.FloatTensor(class_weights).to(self.get_device())
+        else:
+            self.class_weights = None
+    
+    def get_device(self):
+        # Helper to get current device
+        if hasattr(self, 'weight') and self.weight is not None:
+            return self.weight.device
+        return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     def forward(self, inputs, targets):
-        """Forward pass to compute combined loss."""
-        # Focal loss component
-        focal = self.focal_loss(inputs, targets)
+        # If targets are one-hot encoded (for mixup/cutmix), use KL divergence
+        if len(targets.shape) > 1 and targets.shape[1] > 1:
+            ce_loss = -torch.sum(F.log_softmax(inputs, dim=1) * targets, dim=1)
+            if self.class_weights is not None:
+                # Weight each sample based on the dominant class
+                _, dominant_class = targets.max(1)
+                weights = self.class_weights[dominant_class]
+                ce_loss = ce_loss * weights
+            
+            # Apply focal weighting to focus on hard examples
+            probs = torch.sum(F.softmax(inputs, dim=1) * targets, dim=1)
+            focal_weight = (1 - probs) ** self.gamma
+            focal_loss = focal_weight * ce_loss
+            
+            return focal_loss.mean()
         
-        # Add KL divergence regularization for soft targets
-        if len(targets.shape) > 1:  # If targets are one-hot (from mixup/cutmix)
-            kl_div = F.kl_div(
-                F.log_softmax(inputs, dim=1),
-                targets,
-                reduction='batchmean'
-            )
-            return focal + self.kl_weight * kl_div
+        # For standard classification with integer labels
         else:
-            return focal
+            # CrossEntropy with label smoothing
+            smoothed_targets = torch.zeros_like(inputs).scatter_(
+                1, targets.unsqueeze(1), 1.0
+            )
+            smoothed_targets = smoothed_targets * (1.0 - self.label_smoothing) + \
+                              self.label_smoothing / inputs.shape[1]
+            
+            log_probs = F.log_softmax(inputs, dim=1)
+            ce_loss = -torch.sum(log_probs * smoothed_targets, dim=1)
+            
+            if self.class_weights is not None:
+                # Apply class weights
+                weights = self.class_weights[targets]
+                ce_loss = ce_loss * weights
+            
+            # Apply focal weighting for hard examples
+            probs = torch.gather(F.softmax(inputs, dim=1), 1, targets.unsqueeze(1)).squeeze(1)
+            focal_weight = (1 - probs) ** self.gamma
+            focal_loss = focal_weight * ce_loss
+            
+            return focal_loss.mean()
 
 
 class DistillationLoss(nn.Module):

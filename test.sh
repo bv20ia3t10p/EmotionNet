@@ -61,4 +61,11 @@ echo "=================================================="
 # START TESTING
 #==============================================================================
 echo "Starting evaluation of ${MODEL_NAME}..."
+
+# Import environment variables if env_vars.py exists
+if [ -f "env_vars.py" ]; then
+    echo "🔹 Loading environment variables from env_vars.py..."
+    python3 -c "import env_vars"
+fi
+
 python3 main.py --mode test 

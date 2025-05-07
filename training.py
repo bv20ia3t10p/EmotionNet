@@ -465,54 +465,108 @@ def train_model():
             teacher_model, distill_criterion, distill_start
         )
         
-        # Validation phase with test-time augmentation
-        val_loss, val_acc = tta_evaluate(model, val_loader, criterion, device)
+        # Determine if we should skip validation this epoch to speed up training
+        # With ultra-fast enabled, only validate every 5 epochs except for specific checkpoints
+        skip_validation = False
+        ultra_fast = os.getenv("ULTRA_FAST_EVAL", "0") == "1"
+        if ultra_fast and epoch > 0:
+            # Always validate at important milestones:
+            # - First and last epochs
+            # - At SWA start epoch
+            # - After freeze backbone epochs
+            # - When early stopping might be checked
+            important_epochs = [
+                0,  # First epoch
+                FREEZE_BACKBONE_EPOCHS,  # After freezing
+                NUM_EPOCHS - 1,  # Last epoch
+            ]
+            
+            if swa is not None:
+                important_epochs.append(swa.swa_start)  # SWA start epoch
+            
+            # Only validate every 5 epochs or at important milestones
+            skip_validation = (epoch % 5 != 0) and (epoch not in important_epochs) and (epoch < NUM_EPOCHS - EARLY_STOPPING_PATIENCE)
         
-        # Update learning rate if using ReduceLROnPlateau
-        if not hasattr(scheduler, 'step_count'):
-            plateau_scheduler.step(val_acc)
+        if skip_validation:
+            # Use previous validation metrics for logging
+            print(f"🔹 Skipping validation at epoch {epoch+1} for speed (using previous metrics)")
+            # Don't modify val_loss or val_acc
+        else:
+            # Validation phase with test-time augmentation
+            val_loss, val_acc = tta_evaluate(model, val_loader, criterion, device)
+            
+            # Update learning rate if using ReduceLROnPlateau
+            if not hasattr(scheduler, 'step_count'):
+                plateau_scheduler.step(val_acc)
+                
+            # Update best model
+            if os.getenv('DISABLE_CHECKPOINTS') == '0' and val_acc > best_val_acc:
+                best_val_acc = val_acc
+                torch.save(model.state_dict(), MODEL_PATH)
+                print(f"✅ New best model saved with validation accuracy: {val_acc:.2f}%")
+                
+            # Early stopping check
+            early_stopping(val_acc)
+            if early_stopping.early_stop:
+                print(f"⚠️ Early stopping triggered at epoch {epoch + 1}")
+                break
+        
+        # Save checkpoint regardless of validation status
+        save_checkpoint(model, epoch, train_loss, train_acc, val_loss, val_acc)
         
         # Update SWA model if enabled
         if swa is not None:
             swa.update(epoch)
-        
-        # Save best model
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            torch.save(model.state_dict(), MODEL_PATH)
-            print(f"✅ New best model saved with validation accuracy: {val_acc:.2f}%")
-        
-        save_checkpoint(model, epoch, train_loss, train_acc, val_loss, val_acc)
-        
-        # Early stopping check
-        early_stopping(val_acc)
-        if early_stopping.early_stop:
-            print(f"⚠️ Early stopping triggered at epoch {epoch + 1}")
-            break
     
     # Finalize SWA model if enabled
     if swa is not None and swa.swa_n > 0:
         print("🔹 Finalizing SWA model...")
         swa_model = swa.finalize()
         
-        # Evaluate SWA model
-        print("🔹 Evaluating SWA model...")
-        swa_val_loss, swa_val_acc = tta_evaluate(swa_model, val_loader, criterion, device)
-        print(f"✅ SWA model accuracy: {swa_val_acc:.2f}% (vs best: {best_val_acc:.2f}%)")
+        # Only perform SWA evaluation if checkpoints aren't disabled
+        disable_checkpoints = os.getenv("DISABLE_CHECKPOINTS", "0") == "1"
         
-        # Save SWA model if it's better
-        if swa_val_acc > best_val_acc:
-            swa_model_path = f"{MODEL_PATH}_swa.pth"
-            torch.save(swa_model.state_dict(), swa_model_path)
-            print(f"✅ SWA model saved with improved accuracy: {swa_val_acc:.2f}%")
+        if not disable_checkpoints:
+            # Evaluate SWA model
+            print("🔹 Evaluating SWA model...")
+            swa_val_loss, swa_val_acc = tta_evaluate(swa_model, val_loader, criterion, device)
+            print(f"✅ SWA model accuracy: {swa_val_acc:.2f}% (vs best: {best_val_acc:.2f}%)")
             
-            # Update best model if SWA is better
+            # Save SWA model if it's better
+            if swa_val_acc > best_val_acc:
+                swa_model_path = f"{MODEL_PATH}_swa.pth"
+                torch.save(swa_model.state_dict(), swa_model_path)
+                print(f"✅ SWA model saved with improved accuracy: {swa_val_acc:.2f}%")
+                
+                # Update best model if SWA is better
+                torch.save(swa_model.state_dict(), MODEL_PATH)
+                best_val_acc = swa_val_acc
+                # Use SWA model as final model
+                from model_utils import save_final_model
+                save_final_model(swa_model)
+            else:
+                # Save the regular model as final
+                from model_utils import save_final_model
+                save_final_model(model)
+        else:
+            # When checkpoints are disabled, just directly save SWA as the final model
+            print("ℹ️ Skipping SWA evaluation (checkpoints disabled)")
+            from model_utils import save_final_model
+            save_final_model(swa_model)
+            # Also save as the standard model
             torch.save(swa_model.state_dict(), MODEL_PATH)
-            best_val_acc = swa_val_acc
+    else:
+        # No SWA, save the regular model as final
+        from model_utils import save_final_model
+        save_final_model(model)
     
     print(f"✅ Training completed. Best validation accuracy: {best_val_acc:.2f}%")
     print(f"✅ Final Model Saved at {MODEL_PATH}\n")
     
-    # Final evaluation with ensemble of best checkpoints
-    print("🔹 Performing final ensemble evaluation...")
-    ensemble_evaluate(device, val_loader, criterion)
+    # Only perform ensemble evaluation if checkpoints were enabled
+    disable_checkpoints = os.getenv("DISABLE_CHECKPOINTS", "0") == "1"
+    if not disable_checkpoints:
+        print("🔹 Performing final ensemble evaluation...")
+        ensemble_evaluate(device, val_loader, criterion)
+    else:
+        print("ℹ️ Skipping ensemble evaluation (checkpoints were disabled)")

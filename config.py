@@ -9,8 +9,9 @@ MODEL_PATH = os.getenv("MODEL_PATH", f"{ROOT}/model.pth")
 LOG_CSV_PATH = os.getenv("LOG_CSV_PATH", f"{ROOT}/training_log.csv")
 
 # Derived paths
-TRAIN_PATH = os.path.join(DATASET_PATH, "train")
-TEST_PATH = os.path.join(DATASET_PATH, "test")
+# Override TRAIN_PATH directly if provided in environment
+TRAIN_PATH = os.getenv("TRAIN_PATH", os.path.join(DATASET_PATH, "train"))
+TEST_PATH = os.getenv("TEST_PATH", os.path.join(DATASET_PATH, "test"))
 
 # ==============================================================================
 # TRAINING PARAMETERS
@@ -85,7 +86,12 @@ USE_RANDOM_ERASING = int(os.getenv("USE_RANDOM_ERASING", 1)) == 1
 ERASING_PROB = float(os.getenv("ERASING_PROB", 0.3))
 
 # Dataset balancing
-BALANCE_DATASET = int(os.getenv("BALANCE_DATASET", 1)) == 1
+# Allow direct control via MODEL_BALANCE_DATASET if set, otherwise fallback to BALANCE_DATASET
+MODEL_BALANCE_DATASET = os.getenv("MODEL_BALANCE_DATASET")
+if MODEL_BALANCE_DATASET is not None:
+    BALANCE_DATASET = int(MODEL_BALANCE_DATASET) == 1
+else:
+    BALANCE_DATASET = int(os.getenv("BALANCE_DATASET", 1)) == 1
 TARGET_SAMPLES_PER_CLASS = int(os.getenv("TARGET_SAMPLES_PER_CLASS", 7500))
 
 # ==============================================================================

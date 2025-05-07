@@ -9,6 +9,7 @@ import torch.nn as nn # type: ignore
 import torch.optim as optim # type: ignore
 from config import *
 from collections import defaultdict
+from tqdm import tqdm # type: ignore
 
 
 # Enhanced Mixup augmentation with better parameters
@@ -84,6 +85,19 @@ class CutMixTransform:
 
 def prepare_dataloaders(dataset_path, test_path):
     """Prepare DataLoaders for training and validation using the test dataset for validation."""
+    print(f"🔹 Using dataset paths: Train={dataset_path}, Test={test_path}")
+    
+    # Check if we're using a pre-balanced dataset (based on path or env var)
+    # MODEL_BALANCE_DATASET=0 means we're using a physically balanced dataset
+    # MODEL_BALANCE_DATASET=1 means we need dataloader balancing
+    model_balance_dataset = int(os.environ.get('MODEL_BALANCE_DATASET', '1'))
+    using_balanced_dataset = "balanced_" in dataset_path or model_balance_dataset == 0
+    
+    if using_balanced_dataset:
+        print(f"🔹 Using physically balanced dataset (MODEL_BALANCE_DATASET={model_balance_dataset})")
+    else:
+        print(f"🔹 Using dataloader balancing (MODEL_BALANCE_DATASET={model_balance_dataset})")
+    
     # Training transformation pipeline - with reduced strength for early training stability
     train_transform = transforms.Compose([
         transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
@@ -121,11 +135,32 @@ def prepare_dataloaders(dataset_path, test_path):
     
     assert train_classes == val_classes, f"Train and validation classes don't match: {train_classes} vs {val_classes}"
     
+    # Apply class balancing through oversampling if enabled and not using a physically balanced dataset
+    balance_dataset = int(os.environ.get('BALANCE_DATASET', 0))
+    
+    if balance_dataset and not using_balanced_dataset:
+        print("🔹 Applying class balancing through oversampling...")
+        target_samples = int(os.environ.get('TARGET_SAMPLES_PER_CLASS', 5000))
+        from utils import oversample_minority_classes
+        
+        # Get balanced indices
+        balanced_indices = oversample_minority_classes(train_dataset, target_samples)
+        
+        # Create a sampler using the balanced indices
+        train_sampler = torch.utils.data.sampler.SubsetRandomSampler(balanced_indices)
+        shuffle = False  # Don't shuffle when using a sampler
+    else:
+        if using_balanced_dataset:
+            print("🔹 Using physically balanced dataset, no oversampling needed")
+        train_sampler = None
+        shuffle = True
+    
     # Create data loaders with appropriate batch size and worker count
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,
-        shuffle=True,
+        shuffle=shuffle,
+        sampler=train_sampler,
         num_workers=min(4, os.cpu_count() or 1),  # Use at most 4 workers to avoid memory issues
         pin_memory=True,
         drop_last=True
@@ -229,6 +264,15 @@ def resume_model(device, model):
 
 
 def save_checkpoint(model, epoch, train_loss, train_acc, val_loss, val_acc):
+    # Check if checkpoints are disabled via environment variable
+    disable_checkpoints = os.getenv("DISABLE_CHECKPOINTS", "0") == "1"
+    
+    if disable_checkpoints:
+        print(f"Epoch {epoch + 1}: TLoss: {train_loss:.4f}, TAcc: {train_acc:.2f}%, VLoss: {val_loss:.4f}, VAcc: {val_acc:.2f}% (Checkpoints disabled)")
+        # Still log the metrics to CSV
+        log_csv(epoch + 1, train_loss, train_acc, val_loss, val_acc)
+        return
+
     # Save checkpoint for the current epoch
     epoch_model_path = f"{MODEL_PATH}_epoch_{epoch + 1}.pth"
     torch.save(model.state_dict(), epoch_model_path)
@@ -248,6 +292,30 @@ def save_checkpoint(model, epoch, train_loss, train_acc, val_loss, val_acc):
     torch.cuda.empty_cache()
 
 
+def save_final_model(model, model_path=None):
+    """
+    Save the final model at the end of training regardless of checkpoint settings.
+    This ensures we always have a saved model even when checkpoints are disabled.
+    
+    Args:
+        model: The model to save
+        model_path: Optional custom path, defaults to MODEL_PATH from config
+    """
+    target_path = model_path if model_path else MODEL_PATH
+    final_model_path = f"{target_path}_final.pth"
+    
+    print(f"🔹 Saving final model to {final_model_path}...")
+    torch.save(model.state_dict(), final_model_path)
+    print(f"✅ Final model saved successfully")
+    
+    # Also save to the standard path if not already saved
+    if not os.path.exists(target_path):
+        torch.save(model.state_dict(), target_path)
+        print(f"✅ Final model also saved to {target_path}")
+    
+    return final_model_path
+
+
 # Implement test-time augmentation for evaluation
 def tta_evaluate(model, val_loader, criterion, device, num_augments=TTA_NUM_AUGMENTS):
     """Evaluate model with test-time augmentation for better results"""
@@ -256,34 +324,71 @@ def tta_evaluate(model, val_loader, criterion, device, num_augments=TTA_NUM_AUGM
     correct = 0
     total = 0
     
+    # Check if we should use fast evaluation modes
+    disable_checkpoints = os.getenv("DISABLE_CHECKPOINTS", "0") == "1"
+    fast_eval = os.getenv("FAST_EVALUATION", "0") == "1" or disable_checkpoints
+    ultra_fast = os.getenv("ULTRA_FAST_EVAL", "0") == "1"
+    skip_tta = os.getenv("SKIP_TTA", "0") == "1"  # Option to completely skip TTA and just do standard eval
+    
+    # Use fewer augmentations in fast mode
+    if skip_tta or ultra_fast:
+        actual_augments = 1  # No augmentation in ultra-fast mode or when TTA is skipped
+        if skip_tta:
+            print(f"🔹 Skipping test-time augmentation (standard single-pass evaluation)")
+        else:
+            print(f"🔹 Using ULTRA-FAST evaluation (single pass, subset of data)")
+    elif fast_eval:
+        actual_augments = min(2, num_augments)  # Use at most 2 augmentations in fast mode
+        print(f"🔹 Using fast evaluation with {actual_augments} augmentations")
+    else:
+        actual_augments = num_augments
+    
     with torch.no_grad():
-        for batch_idx, (images, targets) in enumerate(val_loader):
+        # Determine how many batches to evaluate
+        max_eval_batches = None
+        if ultra_fast:
+            # In ultra-fast mode, use just a small subset of validation data
+            # Generally ~20% or 10 batches, whichever is smaller
+            max_eval_batches = min(10, max(5, len(val_loader) // 5))
+        
+        # Create iterable for evaluation
+        if max_eval_batches:
+            eval_loader = tqdm(
+                list(val_loader)[:max_eval_batches], 
+                desc=f"Ultra-fast evaluation ({max_eval_batches}/{len(val_loader)} batches)",
+                leave=False
+            )
+        else:
+            eval_loader = tqdm(val_loader, desc="Evaluation", leave=False)
+        
+        for batch_idx, (images, targets) in enumerate(eval_loader):
             images, targets = images.to(device), targets.to(device)
             batch_size = images.size(0)
             
             # Original prediction
             outputs = model(images)
             
-            # TTA predictions
-            for _ in range(num_augments - 1):
-                # Apply simple augmentations
-                aug_images = images.clone()
+            # TTA predictions - only if not in ultra-fast mode and TTA not skipped
+            if actual_augments > 1:
+                for i in range(actual_augments - 1):
+                    # Apply simple augmentations
+                    aug_images = images.clone()
+                    
+                    # In fast eval mode, just do horizontal flip
+                    if i == 0:  # Always do horizontal flip for first augmentation
+                        aug_images = torch.flip(aug_images, dims=[3])
+                    # Only add shifts in full evaluation mode
+                    elif not fast_eval and i % 2 == 0:
+                        shift_x, shift_y = random.randint(-2, 2), random.randint(-2, 2)
+                        if shift_x != 0 or shift_y != 0:
+                            aug_images = torch.roll(aug_images, shifts=(shift_x, shift_y), dims=(2, 3))
+                    
+                    # Add to ensemble
+                    aug_outputs = model(aug_images)
+                    outputs += aug_outputs
                 
-                # Random horizontal flip
-                if random.random() > 0.5:
-                    aug_images = torch.flip(aug_images, dims=[3])
-                
-                # Small random shifts
-                shift_x, shift_y = random.randint(-2, 2), random.randint(-2, 2)
-                if shift_x != 0 or shift_y != 0:
-                    aug_images = torch.roll(aug_images, shifts=(shift_x, shift_y), dims=(2, 3))
-                
-                # Add to ensemble
-                aug_outputs = model(aug_images)
-                outputs += aug_outputs
-            
-            # Average predictions
-            outputs /= num_augments
+                # Average predictions
+                outputs /= actual_augments
             
             loss = criterion(outputs, targets)
             total_loss += loss.item()
@@ -291,6 +396,10 @@ def tta_evaluate(model, val_loader, criterion, device, num_augments=TTA_NUM_AUGM
             _, predicted = outputs.max(1)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
+            
+            # Early break for ultra-fast evaluation
+            if ultra_fast and batch_idx >= max_eval_batches - 1:
+                break
     
     val_acc = 100. * correct / total
     val_loss = total_loss / (batch_idx + 1)
@@ -305,17 +414,29 @@ def ensemble_evaluate(device, val_loader, criterion):
     
     # Find the top N model checkpoints by scanning the MODEL_PATH directory
     model_dir = os.path.dirname(MODEL_PATH)
+    
+    # Check if checkpoints are disabled
+    disable_checkpoints = os.getenv("DISABLE_CHECKPOINTS", "0") == "1"
+    if disable_checkpoints:
+        print("⚠️ Skipping ensemble evaluation (checkpoints are disabled)")
+        return
+    
     checkpoints = []
     
-    for file in os.listdir(model_dir):
-        if file.startswith(os.path.basename(MODEL_PATH) + "_epoch_") and file.endswith(".pth"):
-            checkpoint_path = os.path.join(model_dir, file)
-            # Extract epoch number for sorting
-            try:
-                epoch = int(file.split("_")[-1].split(".")[0])
-                checkpoints.append((checkpoint_path, epoch))
-            except:
-                continue
+    # Only look for checkpoint files if they might exist
+    try:
+        for file in os.listdir(model_dir):
+            if file.startswith(os.path.basename(MODEL_PATH) + "_epoch_") and file.endswith(".pth"):
+                checkpoint_path = os.path.join(model_dir, file)
+                # Extract epoch number for sorting
+                try:
+                    epoch = int(file.split("_")[-1].split(".")[0])
+                    checkpoints.append((checkpoint_path, epoch))
+                except:
+                    continue
+    except Exception as e:
+        print(f"⚠️ Error scanning for checkpoints: {e}")
+        return
     
     # Sort by epoch (higher is better) and take the top N
     checkpoints.sort(key=lambda x: x[1], reverse=True)
@@ -349,7 +470,9 @@ def ensemble_evaluate(device, val_loader, criterion):
     
     print("🔹 Running ensemble evaluation...")
     with torch.no_grad():
-        for batch_idx, (images, targets) in enumerate(val_loader):
+        # Use tqdm for a progress bar
+        from tqdm import tqdm
+        for batch_idx, (images, targets) in enumerate(tqdm(val_loader, desc="Ensemble Evaluation")):
             images, targets = images.to(device), targets.to(device)
             batch_size = images.size(0)
             
@@ -399,9 +522,6 @@ def ensemble_evaluate(device, val_loader, criterion):
                 class_total[label] += 1
                 if predicted[i].item() == label:
                     class_correct[label] += 1
-            
-            if (batch_idx + 1) % 10 == 0:
-                print(f"Processing batch {batch_idx+1}/{len(val_loader)}", end='\r')
     
     # Calculate final metrics
     ensemble_acc = 100.0 * correct / total
@@ -417,6 +537,11 @@ def ensemble_evaluate(device, val_loader, criterion):
     print("\n   Per-class accuracies:")
     for i, (name, acc) in enumerate(zip(class_names, class_accuracies)):
         print(f"   - {name}: {acc:.2f}% ({class_correct[i]}/{class_total[i]})")
+    
+    # Clear memory
+    for model in models:
+        del model
+    torch.cuda.empty_cache()
     
     return ensemble_loss, ensemble_acc
 
@@ -617,6 +742,7 @@ class SWA:
         
         # Create a hook to accumulate batch norm statistics
         def update_bn(model, loader, device):
+            # Set up modules for updating statistics
             momenta = {}
             for module in model.modules():
                 if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
@@ -626,11 +752,22 @@ class SWA:
                     module.momentum = None
                     module.num_batches_tracked *= 0
             
+            # Check if fast finalization is enabled
+            fast_finalize = os.environ.get('FAST_SWA_FINALIZE', '0') == '1'
+            
+            # Only use a limited number of batches for efficiency
+            max_batches = 10 if fast_finalize else 50  # Even fewer batches in fast mode
+            
+            print(f"  Using {'fast' if fast_finalize else 'standard'} SWA finalization with {max_batches} batches")
+            
             # Update the statistics for each batch
-            from config import BATCH_SIZE
             n = 0
             with torch.no_grad():
-                for images, _ in loader:
+                for batch_idx, (images, _) in enumerate(loader):
+                    # Limit the number of batches processed
+                    if batch_idx >= max_batches:
+                        break
+                        
                     images = images.to(device)
                     b = images.size(0)
                     
@@ -640,16 +777,27 @@ class SWA:
                     
                     model(images)
                     n += b
+                    
+                    # Progress indicator
+                    if batch_idx % 5 == 0:
+                        print(f"  Batch {batch_idx+1}/{min(max_batches, len(loader))}", end="\r")
             
             # Restore momentum values
             for module, momentum in momenta.items():
                 module.momentum = momentum
+                
+            print(f"  Used {min(batch_idx+1, max_batches)} batches for BN calibration    ")
         
         # We need a loader to update BN statistics
         try:
             # Try to get the training loader from config
             from config import TRAIN_PATH, TEST_PATH, BATCH_SIZE
             from model_utils import prepare_dataloaders
+            
+            # Check if we should use a smaller batch size for faster processing
+            fast_finalize = os.environ.get('FAST_SWA_FINALIZE', '0') == '1'
+            
+            # Create a data loader with a subset of the data for faster processing
             train_loader, _ = prepare_dataloaders(TRAIN_PATH, TEST_PATH)
             
             # Use a subset of the training data to update BN statistics
@@ -660,6 +808,10 @@ class SWA:
         
         self.swa_model.eval()
         print("✅ SWA model finalized")
+        
+        # Clear memory explicitly
+        torch.cuda.empty_cache() 
+        
         return self.swa_model
 
 
