@@ -68,10 +68,18 @@ LARGE_BATCH_BN = int(os.getenv("LARGE_BATCH_BN", 1)) == 1
 # Advanced augmentation strategies
 USE_MIXUP = int(os.getenv("USE_MIXUP", 1)) == 1
 USE_CUTMIX = int(os.getenv("USE_CUTMIX", 1)) == 1
-MIXUP_PROB = float(os.getenv("MIXUP_PROB", 0.4))
-CUTMIX_PROB = float(os.getenv("CUTMIX_PROB", 0.3))
-MIXUP_ALPHA = float(os.getenv("MIXUP_ALPHA", 0.5))
-CUTMIX_ALPHA = float(os.getenv("CUTMIX_ALPHA", 1.0))
+MIXUP_PROB = float(os.getenv("MIXUP_PROB", 0.7))
+CUTMIX_PROB = float(os.getenv("CUTMIX_PROB", 0.6))
+MIXUP_ALPHA = float(os.getenv("MIXUP_ALPHA", 1.2))
+CUTMIX_ALPHA = float(os.getenv("CUTMIX_ALPHA", 1.4))
+
+# Progressive augmentation phases
+PROGRESSIVE_AUGMENTATION = int(os.getenv("PROGRESSIVE_AUGMENTATION", 1)) == 1
+PHASE_1_EPOCHS = int(os.getenv("PHASE_1_EPOCHS", 5))
+PHASE_2_EPOCHS = int(os.getenv("PHASE_2_EPOCHS", 10))
+PHASE_3_EPOCHS = int(os.getenv("PHASE_3_EPOCHS", 15))
+PHASE_4_EPOCHS = int(os.getenv("PHASE_4_EPOCHS", 25))
+PHASE_5_EPOCHS = int(os.getenv("PHASE_5_EPOCHS", 40))
 
 # Color and geometrical transformations
 USE_COLOR_JITTER = int(os.getenv("USE_COLOR_JITTER", 1)) == 1
@@ -80,8 +88,10 @@ CONTRAST = float(os.getenv("CONTRAST", 0.2))
 SATURATION = float(os.getenv("SATURATION", 0.2))
 HUE = float(os.getenv("HUE", 0.05))
 DEGREES = int(os.getenv("ROTATION_DEGREES", 15))
-TRANSLATE = (float(os.getenv("TRANSLATE_X", 0.1)), float(os.getenv("TRANSLATE_Y", 0.1)))
-SCALE = (float(os.getenv("SCALE_MIN", 0.8)), float(os.getenv("SCALE_MAX", 1.2)))
+TRANSLATE = (float(os.getenv("TRANSLATE_X", 0.1)),
+             float(os.getenv("TRANSLATE_Y", 0.1)))
+SCALE = (float(os.getenv("SCALE_MIN", 0.8)),
+         float(os.getenv("SCALE_MAX", 1.2)))
 USE_RANDOM_ERASING = int(os.getenv("USE_RANDOM_ERASING", 1)) == 1
 ERASING_PROB = float(os.getenv("ERASING_PROB", 0.3))
 
@@ -107,18 +117,18 @@ KL_WEIGHT = float(os.getenv("KL_WEIGHT", 0.1))
 # ==============================================================================
 # REGULARIZATION
 # ==============================================================================
-WEIGHT_DECAY = float(os.environ.get('WEIGHT_DECAY', 0.00025))
-HEAD_DROPOUT = float(os.environ.get('HEAD_DROPOUT', 0.35))
-FEATURE_DROPOUT = float(os.environ.get('FEATURE_DROPOUT', 0.15))
+WEIGHT_DECAY = float(os.environ.get('WEIGHT_DECAY', 0.001))
+HEAD_DROPOUT = float(os.environ.get('HEAD_DROPOUT', 0.6))
+FEATURE_DROPOUT = float(os.environ.get('FEATURE_DROPOUT', 0.4))
 
 # Gradient clipping for stability
-GRAD_CLIP_VALUE = float(os.getenv("GRAD_CLIP_VALUE", 0.5))
+GRAD_CLIP_VALUE = float(os.getenv("GRAD_CLIP_VALUE", 1.0))
 
 # ==============================================================================
 # LEARNING RATE SCHEDULING
 # ==============================================================================
-SCHEDULER_TYPE = os.getenv("SCHEDULER_TYPE", "cosine")
-PATIENCE = int(os.environ.get('PATIENCE', 10))
+SCHEDULER_TYPE = os.getenv("SCHEDULER_TYPE", "cosine_restart")
+PATIENCE = int(os.environ.get('PATIENCE', 8))
 FACTOR = float(os.environ.get('FACTOR', 0.7))
 
 # ==============================================================================
@@ -126,23 +136,24 @@ FACTOR = float(os.environ.get('FACTOR', 0.7))
 # ==============================================================================
 # Stochastic Weight Averaging
 SWA_ENABLED = int(os.getenv("SWA_ENABLED", 1)) == 1
-SWA_START_EPOCH = int(os.getenv("SWA_START_EPOCH", 100))
-SWA_FREQ = int(os.getenv("SWA_FREQ", 5))
+SWA_START_EPOCH = int(os.getenv("SWA_START_EPOCH", 40))
+SWA_FREQ = int(os.getenv("SWA_FREQ", 1))
 
 # Knowledge distillation
 SELF_DISTILLATION_ENABLED = int(os.getenv("SELF_DISTILLATION_ENABLED", 1)) == 1
-SELF_DISTILLATION_START = int(os.getenv("SELF_DISTILLATION_START", 60))
-SELF_DISTILLATION_TEMP = float(os.getenv("SELF_DISTILLATION_TEMP", 2.5))
-SELF_DISTILLATION_ALPHA = float(os.getenv("SELF_DISTILLATION_ALPHA", 0.4))
+SELF_DISTILLATION_START = int(os.getenv("SELF_DISTILLATION_START", 30))
+SELF_DISTILLATION_TEMP = float(os.getenv("SELF_DISTILLATION_TEMP", 3.0))
+SELF_DISTILLATION_ALPHA = float(os.getenv("SELF_DISTILLATION_ALPHA", 0.3))
 
 # Early stopping
-EARLY_STOPPING_PATIENCE = int(os.getenv("EARLY_STOPPING_PATIENCE", 30))
+EARLY_STOPPING_PATIENCE = int(os.getenv("EARLY_STOPPING_PATIENCE", 35))
 
 # ==============================================================================
 # INFERENCE SETTINGS
 # ==============================================================================
 # Test-time augmentation for robust predictions
 TTA_ENABLED = int(os.getenv("TTA_ENABLED", 1)) == 1
-TTA_NUM_AUGMENTS = int(os.getenv("TTA_NUM_AUGMENTS", 8))
+TTA_NUM_AUGMENTS = int(os.getenv("TTA_NUM_AUGMENTS", 16))
 # Ensemble model evaluation settings
-ENSEMBLE_SIZE = int(os.getenv("ENSEMBLE_SIZE", 5))  # Number of best checkpoints to use for ensemble
+# Number of best checkpoints to use for ensemble
+ENSEMBLE_SIZE = int(os.getenv("ENSEMBLE_SIZE", 5))

@@ -62,10 +62,9 @@ echo "=================================================="
 #==============================================================================
 echo "Starting evaluation of ${MODEL_NAME}..."
 
-# Import environment variables if env_vars.py exists
-if [ -f "env_vars.py" ]; then
-    echo "🔹 Loading environment variables from env_vars.py..."
-    python3 -c "import env_vars"
-fi
+# Set the train and test paths explicitly
+export TRAIN_PATH="${DATASET_PATH}/train"
+export TEST_PATH="${DATASET_PATH}/test"
+export MODEL_BALANCE_DATASET="0"
 
 python3 main.py --mode test 

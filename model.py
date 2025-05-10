@@ -192,8 +192,10 @@ class ConvNeXtEmoteNet(nn.Module):
     """ConvNeXt-based model enhanced for emotion recognition.
     
     Features:
-    - Dual attention mechanism (ECA + SE)
+    - Multi-scale attention mechanism (ECA + SE + CBAM)
+    - Weighted feature pyramid for multi-scale feature aggregation
     - Residual connections for better gradient flow
+    - Dynamic channel calibration
     - SiLU activations in classifier head
     
     Args:
@@ -229,16 +231,44 @@ class ConvNeXtEmoteNet(nn.Module):
         else:  # large
             feature_dim = 1536
         
-        # Dual attention mechanisms for better feature focus
+        # CBAM attention module (combined channel and spatial attention)
+        self.cbam = CBAM(feature_dim, reduction_ratio=8)
+        
+        # Multi-scale attention mechanisms for better feature focus
         self.eca_attention = ECABlock(feature_dim)
         self.se_attention = SEBlock(feature_dim)
+        
+        # Dynamic channel calibration
+        self.channel_calibration = nn.Sequential(
+            nn.Conv2d(feature_dim, feature_dim // 4, kernel_size=1),
+            nn.BatchNorm2d(feature_dim // 4),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(feature_dim // 4, feature_dim, kernel_size=1),
+            nn.Sigmoid()
+        )
         
         # Feature refinement with batch normalization
         self.feature_refine = nn.Sequential(
             nn.Conv2d(feature_dim, 1024, kernel_size=1),
             nn.BatchNorm2d(1024),
-            nn.GELU(),
+            nn.SiLU(inplace=True),  # Using SiLU instead of GELU
             nn.Dropout2d(FEATURE_DROPOUT)
+        )
+        
+        # Multi-scale feature pyramid
+        self.pyramid_layers = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(feature_dim, 512, kernel_size=3, padding=i+1, dilation=i+1),
+                nn.BatchNorm2d(512),
+                nn.SiLU(inplace=True)
+            ) for i in range(3)  # 3 parallel paths with different receptive fields
+        ])
+        
+        # Pyramid fusion
+        self.pyramid_fusion = nn.Sequential(
+            nn.Conv2d(512 * 3, 1024, kernel_size=1),
+            nn.BatchNorm2d(1024),
+            nn.SiLU(inplace=True)
         )
         
         # Residual connection for feature refinement
@@ -248,22 +278,30 @@ class ConvNeXtEmoteNet(nn.Module):
         self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.global_max_pool = nn.AdaptiveMaxPool2d((1, 1))
         
+        # Improved pooling with learnable weights
+        self.pool_weights = nn.Parameter(torch.ones(2) / 2)
+        
         # Dropout for regularization
         self.dropout = nn.Dropout(HEAD_DROPOUT)
         
         # Enhanced classifier with layer normalization and SiLU
         self.classifier = nn.Sequential(
-            nn.Linear(1024 * 2, 512),
-            nn.LayerNorm(512),
+            nn.Linear(1024 * 2, 768),
+            nn.LayerNorm(768),
             nn.SiLU(inplace=True),
             nn.Dropout(HEAD_DROPOUT),
             
-            nn.Linear(512, 256),
-            nn.LayerNorm(256),
+            nn.Linear(768, 384),
+            nn.LayerNorm(384),
             nn.SiLU(inplace=True),
             nn.Dropout(HEAD_DROPOUT * 0.8),
             
-            nn.Linear(256, NUM_CLASSES)
+            nn.Linear(384, 192),
+            nn.LayerNorm(192),
+            nn.SiLU(inplace=True),
+            nn.Dropout(HEAD_DROPOUT * 0.6),
+            
+            nn.Linear(192, NUM_CLASSES)
         )
         
         # Initialize weights
@@ -272,7 +310,8 @@ class ConvNeXtEmoteNet(nn.Module):
     def _initialize_weights(self):
         """Initialize model weights with appropriate distributions."""
         # Initialize the new layers we added
-        for m in [self.feature_refine, self.classifier, self.feature_proj]:
+        for m in [self.feature_refine, self.classifier, self.feature_proj, 
+                 self.pyramid_fusion, self.channel_calibration, *self.pyramid_layers]:
             for layer in m.modules():
                 if isinstance(layer, nn.Conv2d):
                     nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
@@ -300,26 +339,91 @@ class ConvNeXtEmoteNet(nn.Module):
         # Extract features from backbone
         features = self.backbone(x)
         
-        # Apply dual attention mechanisms and combine results
+        # Apply multi-scale attention mechanisms
+        cbam_attended = self.cbam(features)
         eca_attended = self.eca_attention(features)
         se_attended = self.se_attention(features)
-        features = eca_attended + se_attended
+        
+        # Combine attention mechanisms using learned weights
+        # Add residual connection from original features
+        features = cbam_attended + eca_attended + se_attended + features
+        
+        # Apply dynamic channel calibration
+        channel_weights = self.channel_calibration(features)
+        features = features * channel_weights
+        
+        # Apply multi-scale feature pyramid
+        pyramid_features = []
+        for layer in self.pyramid_layers:
+            pyramid_features.append(layer(features))
+        
+        # Fuse pyramid features
+        pyramid_output = self.pyramid_fusion(torch.cat(pyramid_features, dim=1))
         
         # Apply feature refinement with residual connection
         refined = self.feature_refine(features)
         residual = self.feature_proj(features)
-        refined = refined + residual
+        refined = refined + residual + pyramid_output
         
-        # Global pooling with both average and max pooling
+        # Apply weighted pooling with learnable weights
+        pool_weights = F.softmax(self.pool_weights, dim=0)
         avg_pool = self.global_avg_pool(refined).view(refined.size(0), -1)
         max_pool = self.global_max_pool(refined).view(refined.size(0), -1)
-        x = torch.cat([avg_pool, max_pool], dim=1)
+        
+        # Weighted combination of pooling methods
+        x = torch.cat([
+            pool_weights[0] * avg_pool + pool_weights[1] * max_pool,
+            max_pool
+        ], dim=1)
         
         # Apply dropout and classification
         x = self.dropout(x)
         x = self.classifier(x)
         
         return x
+
+
+# CBAM: Convolutional Block Attention Module
+class CBAM(nn.Module):
+    """Convolutional Block Attention Module (CBAM).
+    
+    Combines channel and spatial attention for better feature refinement.
+    
+    Args:
+        channels: Number of input channels
+        reduction_ratio: Channel reduction ratio for efficiency
+    """
+    def __init__(self, channels, reduction_ratio=16):
+        super(CBAM, self).__init__()
+        
+        # Channel attention module
+        self.channel_attention = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(channels, channels // reduction_ratio, kernel_size=1, bias=False),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(channels // reduction_ratio, channels, kernel_size=1, bias=False),
+            nn.Sigmoid()
+        )
+        
+        # Spatial attention module
+        self.spatial_attention = nn.Sequential(
+            nn.Conv2d(2, 1, kernel_size=7, padding=3, bias=False),
+            nn.Sigmoid()
+        )
+    
+    def forward(self, x):
+        # Apply channel attention
+        channel_weights = self.channel_attention(x)
+        x = x * channel_weights
+        
+        # Apply spatial attention
+        avg_spatial = torch.mean(x, dim=1, keepdim=True)
+        max_spatial, _ = torch.max(x, dim=1, keepdim=True)
+        spatial_input = torch.cat([avg_spatial, max_spatial], dim=1)
+        spatial_weights = self.spatial_attention(spatial_input)
+        
+        # Apply both attentions
+        return x * spatial_weights
 
 
 # ==============================================================================
