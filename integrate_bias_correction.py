@@ -37,13 +37,14 @@ def integrate_bias_correction(
     test_dir="./extracted/emotion/test",
     model_dir="./models",
     backbone="resnet18",
-    batch_size=32,
+    batch_size=64,
     epochs=30,
     patience=7,
     learning_rate=0.0001,
-    correction_strength=3.0,  # Higher value for stronger correction
-    correction_frequency=1,
-    save_path="integrated_model.pth"
+    correction_strength=1.0,
+    correction_frequency=2,
+    save_path="integrated_model.pth",
+    use_bias_correction=True
 ):
     """
     Integrate bias correction with existing emotion recognition training pipeline.
@@ -51,7 +52,7 @@ def integrate_bias_correction(
     This function will:
     1. Load or create a model
     2. Setup training with the existing balanced_training pipeline
-    3. Apply bias correction during training
+    3. Apply bias correction during training (optional)
     4. Evaluate and save the model
     
     Args:
@@ -67,6 +68,7 @@ def integrate_bias_correction(
         correction_strength: Strength of bias correction (higher = more aggressive)
         correction_frequency: How often to update bias weights (in epochs)
         save_path: Path to save final model
+        use_bias_correction: Whether to use bias correction during training
     """
     # Ensure model directory exists
     os.makedirs(model_dir, exist_ok=True)
@@ -95,15 +97,26 @@ def integrate_bias_correction(
     # Create datasets with face-preserving augmentations
     train_dataset = EmotionDataset(
         train_paths, train_labels, transform=transform, 
-        augmentation_level=2, target_classes=[0, 1, 6]  # Targeted augmentation for underrepresented classes
+        augmentation_level=1,
+        target_classes=[0, 1, 6]
     )
     test_dataset = EmotionDataset(
         test_paths, test_labels, transform=transform
     )
     
+    # Create data loaders with weighted sampling to improve class balance
+    from torch.utils.data import WeightedRandomSampler
+    
+    # Calculate sample weights for balanced sampling
+    class_sample_count = np.bincount(train_labels, minlength=len(EMOTIONS))
+    weight = 1. / class_sample_count
+    samples_weight = weight[train_labels]
+    samples_weight = torch.from_numpy(samples_weight).float()
+    sampler = WeightedRandomSampler(samples_weight, len(samples_weight))
+    
     # Create data loaders
     train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True,
+        train_dataset, batch_size=batch_size, sampler=sampler,
         num_workers=4, pin_memory=True
     )
     test_loader = DataLoader(
@@ -115,7 +128,7 @@ def integrate_bias_correction(
     try:
         model = EnhancedResEmoteNet(
             num_classes=7, backbone=backbone,
-            dropout_rate=0.5  # Increase dropout to prevent overfitting
+            dropout_rate=0.3
         )
     except Exception as e:
         print(f"Error creating model with specified parameters: {e}")
@@ -156,7 +169,7 @@ def integrate_bias_correction(
     initial_weights = initial_weights / np.mean(initial_weights)
     
     # Extra boost for classes that typically have low accuracy
-    boost_classes = {0: 4.0, 6: 4.0}  # Angry and Neutral
+    boost_classes = {0: 2.0, 6: 2.0}
     for cls, boost in boost_classes.items():
         initial_weights[cls] *= boost
     
@@ -168,43 +181,43 @@ def integrate_bias_correction(
         print(f"  {emotion}: {initial_weights[i].item():.4f}")
     
     # Create optimizer with different learning rates for different parts of the model
-    # Feature extractor: low learning rate
-    # Classifier: high learning rate
     params = []
     for name, param in model.named_parameters():
         lr_multiplier = 1.0
         
         # Lower learning rate for backbone/feature extractor
         if any(x in name for x in ['backbone', 'feature_extractor', 'conv', 'stem', 'stage']):
-            lr_multiplier = 0.1
+            lr_multiplier = 0.2
         # Standard learning rate for middle layers
         elif any(x in name for x in ['fpn', 'middle', 'enhance', 'attn']):
-            lr_multiplier = 0.5
+            lr_multiplier = 0.7
         # Higher learning rate for classifier
         elif any(x in name for x in ['classifier', 'fc', 'linear', 'out', 'emotion_classifier']):
-            lr_multiplier = 10.0
+            lr_multiplier = 5.0
             
         params.append({
             'params': param,
             'lr': learning_rate * lr_multiplier
         })
     
-    optimizer = torch.optim.Adam(params)
-    scheduler = StepLR(optimizer, step_size=5, gamma=0.5)  # Use directly from torch.optim.lr_scheduler
+    optimizer = torch.optim.Adam(params, weight_decay=1e-5)
+    scheduler = StepLR(optimizer, step_size=3, gamma=0.7)
     
-    # Initialize bias corrector
-    bias_corrector = BiasCorrector(
-        model, train_loader, test_loader, device,
-        num_classes=len(EMOTIONS),
-        initial_weights=initial_weights,
-        correction_strength=correction_strength,
-        min_weight=1.0,
-        max_weight=30.0,  # Allow higher max weights
-        smooth_factor=0.6  # Less smoothing for more aggressive correction
-    )
-    
-    # Get initial criterion with bias correction
-    criterion = bias_corrector.get_criterion()
+    # Initialize bias corrector if enabled
+    if use_bias_correction:
+        bias_corrector = BiasCorrector(
+            model, train_loader, test_loader, device,
+            num_classes=len(EMOTIONS),
+            initial_weights=initial_weights,
+            correction_strength=correction_strength,
+            min_weight=0.5,
+            max_weight=10.0,
+            smooth_factor=0.8
+        )
+        criterion = bias_corrector.get_criterion()
+    else:
+        # Use standard weighted cross entropy loss without correction
+        criterion = nn.CrossEntropyLoss(weight=initial_weights)
     
     # Train with bias correction
     print("\n" + "="*50)
@@ -359,7 +372,7 @@ def integrate_bias_correction(
         print(classification_report(valid_labels, valid_preds, target_names=target_names))
         
         # Check for bias correction update
-        if epoch % correction_frequency == 0:
+        if use_bias_correction and epoch % correction_frequency == 0:
             print("\nUpdating bias correction weights...")
             bias_corrector.update_weights()
             criterion = bias_corrector.get_criterion()
@@ -446,14 +459,16 @@ def main():
     parser.add_argument('--backbone', type=str, default='resnet18', 
                       choices=['resnet18', 'efficientnet_b0', 'mobilenet_v3_small'],
                       help='Backbone architecture')
-    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
+    parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
     parser.add_argument('--epochs', type=int, default=30, help='Number of epochs')
     parser.add_argument('--patience', type=int, default=7, help='Early stopping patience')
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='Learning rate')
-    parser.add_argument('--correction_strength', type=float, default=3.0, 
+    parser.add_argument('--correction_strength', type=float, default=1.0, 
                       help='Bias correction strength (higher = more aggressive)')
-    parser.add_argument('--correction_frequency', type=int, default=1, 
+    parser.add_argument('--correction_frequency', type=int, default=2, 
                       help='How often to update bias weights (in epochs)')
+    parser.add_argument('--no_bias_correction', action='store_true',
+                      help='Disable bias correction during training')
     
     args = parser.parse_args()
     
@@ -470,7 +485,8 @@ def main():
         learning_rate=args.learning_rate,
         correction_strength=args.correction_strength,
         correction_frequency=args.correction_frequency,
-        save_path=args.save_path
+        save_path=args.save_path,
+        use_bias_correction=not args.no_bias_correction
     )
     
     print("\nTraining with bias correction completed!")

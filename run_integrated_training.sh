@@ -11,12 +11,13 @@ MODEL_DIR="./models"
 MODEL_PATH=""
 SAVE_PATH="integrated_model.pth"
 BACKBONE="resnet18"
-BATCH_SIZE=32
+BATCH_SIZE=64
 EPOCHS=30
 PATIENCE=7
 LEARNING_RATE=0.0001
-CORRECTION_STRENGTH=3.0
-CORRECTION_FREQUENCY=1
+CORRECTION_STRENGTH=1.0
+CORRECTION_FREQUENCY=2
+USE_BIAS_CORRECTION=true
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -69,6 +70,10 @@ while [[ $# -gt 0 ]]; do
       CORRECTION_FREQUENCY="$2"
       shift 2
       ;;
+    --no_bias_correction)
+      USE_BIAS_CORRECTION=false
+      shift
+      ;;
     *)
       echo "Unknown parameter: $1"
       exit 1
@@ -85,13 +90,23 @@ echo "=========================================="
 echo "Data directory: $DATA_DIR"
 echo "Test directory: $TEST_DIR"
 echo "Using backbone: $BACKBONE"
-echo "Bias correction strength: $CORRECTION_STRENGTH"
-echo "Correction update frequency: Every $CORRECTION_FREQUENCY epoch(s)"
+echo "Batch size: $BATCH_SIZE"
+if [ "$USE_BIAS_CORRECTION" = true ]; then
+  echo "Using bias correction with strength: $CORRECTION_STRENGTH"
+  echo "Correction update frequency: Every $CORRECTION_FREQUENCY epoch(s)"
+else
+  echo "Bias correction disabled"
+fi
 echo "=========================================="
 
 # Run integrated training
 if [ -n "$MODEL_PATH" ]; then
   echo "Continuing training from: $MODEL_PATH"
+  BIAS_ARGS=""
+  if [ "$USE_BIAS_CORRECTION" = false ]; then
+    BIAS_ARGS="--no_bias_correction"
+  fi
+  
   python3 integrate_bias_correction.py \
     --data_dir $DATA_DIR \
     --test_dir $TEST_DIR \
@@ -104,9 +119,15 @@ if [ -n "$MODEL_PATH" ]; then
     --patience $PATIENCE \
     --learning_rate $LEARNING_RATE \
     --correction_strength $CORRECTION_STRENGTH \
-    --correction_frequency $CORRECTION_FREQUENCY
+    --correction_frequency $CORRECTION_FREQUENCY \
+    $BIAS_ARGS
 else
   echo "Training from scratch"
+  BIAS_ARGS=""
+  if [ "$USE_BIAS_CORRECTION" = false ]; then
+    BIAS_ARGS="--no_bias_correction"
+  fi
+  
   python3 integrate_bias_correction.py \
     --data_dir $DATA_DIR \
     --test_dir $TEST_DIR \
@@ -118,7 +139,8 @@ else
     --patience $PATIENCE \
     --learning_rate $LEARNING_RATE \
     --correction_strength $CORRECTION_STRENGTH \
-    --correction_frequency $CORRECTION_FREQUENCY
+    --correction_frequency $CORRECTION_FREQUENCY \
+    $BIAS_ARGS
 fi
 
 # Check if training completed successfully
