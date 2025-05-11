@@ -1,180 +1,155 @@
-# ResEmoteNet: State-of-the-Art Facial Expression Recognition
+# Facial Emotion Recognition - Class Balancing and Bias Optimization
 
-This repository contains an implementation of ResEmoteNet, a state-of-the-art model for facial expression recognition on the FER2013 dataset. The implementation includes several enhancements based on recent research findings, including synthetic data augmentation, continuous emotion representation (valence-arousal) and advanced data augmentation techniques.
+This repository contains advanced tools for addressing class imbalance in facial emotion recognition models. The tools help overcome the common problem where models struggle to identify emotions like "angry" and "neutral" due to class distribution issues.
 
-## Features
+## Problem Overview
 
-- Enhanced ResEmoteNet architecture with dual attention mechanisms
-- Transfer learning with pretrained ResNet18 backbone
-- Emotion-specific feature extraction paths for challenging emotions
-- Synthetic data generation using Stable Diffusion models
-- Multi-task learning with valence-arousal regression
-- Advanced data augmentation including mixup and targeted transformations
-- Class imbalance handling with focal loss and weighted sampling
-- Real-time webcam-based emotion recognition
+Our facial emotion recognition model faced severe class imbalance issues, resulting in:
+- 0% accuracy for "angry" and "neutral" classes in validation
+- Uneven predictions heavily skewed toward overrepresented classes
+- Misrepresentation of facial expressions in real-world testing
 
-## Directory Structure
+## Solutions
 
-Your dataset should be organized as follows:
+We've created two main solutions:
 
-```
-emotion/
-├── train/
-│   ├── angry/
-│   ├── disgust/
-│   ├── fear/
-│   ├── happy/
-│   ├── sad/
-│   ├── surprise/
-│   └── neutral/
-└── test/
-    ├── angry/
-    ├── disgust/
-    ├── fear/
-    ├── happy/
-    ├── sad/
-    ├── surprise/
-    └── neutral/
-```
+1. **Balanced Training Framework**: A comprehensive training pipeline with advanced oversampling and targeted augmentation
+2. **Bias Optimization Framework**: A system to find optimal bias parameters for post-processing predictions
 
-## Installation
+## Setup and Requirements
 
-1. Clone this repository:
-```bash
-git clone https://github.com/your-username/resemotenet.git
-cd resemotenet
-```
-
-2. Install the required dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-## Usage
-
-### Step 1: Generate Synthetic Data (Optional but Recommended)
-
-Generate additional synthetic facial emotion data to enhance the training set, especially for underrepresented classes like 'disgust':
-
-```bash
-python generate_synthetic_data.py --output_dir ../emotion/synthetic --num_images 500
-```
-
-You can merge the synthetic data with your real training data to create an augmented dataset:
-
-```bash
-# Example: Copy synthetic data to training directory
-cp -r ../emotion/synthetic/angry/* ../emotion/train/angry/
-cp -r ../emotion/synthetic/disgust/* ../emotion/train/disgust/
-# ... repeat for other emotions
-```
-
-### Step 2: Train the Model
-
-The easiest way to train the model is using the provided script:
-
-```bash
-./train_with_synthetic.sh --epochs 50 --batch_size 64 --model-type enhanced
-```
-
-Or train manually with more control:
-
-```bash
-python train_emotion_recognition.py --train_dir ../emotion/train --test_dir ../emotion/test --epochs 50 --batch_size 64 --use_mixup --focal_loss --save_dir ./models
-```
-
-Command-line options:
-- `--train_dir`: Path to training data
-- `--test_dir`: Path to test data
-- `--batch_size`: Batch size for training (default: 64)
-- `--epochs`: Number of epochs (default: 50)
-- `--lr`: Learning rate (default: 0.001)
-- `--weight_decay`: Weight decay for regularization (default: 1e-4)
-- `--save_dir`: Directory to save models (default: ./models)
-- `--use_mixup`: Enable mixup augmentation
-- `--focal_loss`: Use focal loss for handling class imbalance
-- `--focal_gamma`: Gamma parameter for focal loss (default: 2.0)
-- `--model`: Choose model type: 'original' or 'enhanced' (default: enhanced)
-- `--no_cuda`: Disable CUDA
-
-### Step 3: Evaluate and Use the Trained Model
-
-#### Evaluate on Test Dataset
-
-```bash
-python predict_emotion.py --model_path ./models/best_enhanced_model.pth --test_dir ../emotion/test --output_dir ./results
-```
-
-This will generate detailed metrics including a confusion matrix and classification report.
-
-#### Predict on a Single Image
-
-```bash
-python predict_emotion.py --model_path ./models/best_enhanced_model.pth --image_path path/to/your/image.jpg --output_dir ./results
-```
-
-#### Real-time Webcam Inference
-
-```bash
-python predict_emotion.py --model_path ./models/best_enhanced_model.pth --use_camera
-```
-
-## Model Architecture
-
-The repository includes two model architectures:
-
-### 1. Original ResEmoteNet
-- Residual blocks with attention modules
-- Simple classification and valence-arousal regression heads
-
-### 2. Enhanced ResEmoteNet (Recommended)
-- Transfer learning with pretrained ResNet18 backbone
-- Dual attention mechanism combining both channel and spatial attention
-- Specialized feature extraction paths for challenging emotions (fear, sad, disgust)
-- Feature fusion layer to combine general and emotion-specific features
-- Multi-level training with deep supervision
-- Higher regularization (dropout, L2) to prevent overfitting
-
-## Training Techniques
-
-The training process includes several advanced techniques:
-
-1. **Focal Loss**: Addresses class imbalance by focusing on hard examples
-2. **Weighted Sampling**: Oversamples minority classes with extra weight for challenging emotions
-3. **Specialized Augmentation**: Stronger data augmentation for difficult emotions
-4. **One-Cycle Learning Rate**: Efficient learning rate scheduling with warmup and decay
-5. **Differential Learning Rates**: Different learning rates for different parts of the model
-6. **Mixup Augmentation**: Creates synthetic training examples by linear interpolation
-
-## Performance
-
-When trained with our enhanced techniques, the model achieves significantly better performance on the FER2013 dataset:
-
-- **Enhanced model**: ~67% validation accuracy with more balanced performance across emotions
-- **Original model**: ~60% validation accuracy with poor performance on minority classes
-
-The enhanced model performs particularly well on challenging emotions like fear, sad, and disgust compared to the baseline.
-
-## Citation
-
-If you use this code in your research, please cite:
+### Dependencies
 
 ```
-@article{resemotenet2024,
-  title={ResEmoteNet: Bridging Accuracy and Loss for Facial Emotion Recognition},
-  author={Your Name},
-  journal={arXiv preprint},
-  year={2024}
-}
+torch>=1.8.0
+torchvision>=0.9.0
+numpy>=1.19.5
+pandas>=1.3.0
+opencv-python>=4.5.0
+scikit-learn>=0.24.0
+albumentations>=1.0.0
+matplotlib>=3.4.0
+optuna>=2.10.0
+scipy>=1.7.0
+tqdm>=4.62.0
 ```
 
-## Acknowledgments
+### Installation
 
-This implementation draws inspiration from recent advances in facial expression recognition research, including:
-- "Improvement in Facial Emotion Recognition using Synthetic Data Generated by Diffusion Model" (2024)
-- "GiMeFive: Towards Interpretable Facial Emotion Classification" (2024)
-- "CAGE: Circumplex Affect Guided Expression Inference" (2024)
+1. Clone this repository
+2. Install dependencies: `pip install -r requirements.txt`
+3. Make sure you have the facial emotion dataset (e.g., FER2013) organized by emotion class
+4. Make scripts executable: `chmod +x *.sh`
+
+## 1. Balanced Training Framework
+
+The `balanced_training.py` script provides a complete solution for training with balanced classes:
+
+### Key Features
+
+- **Class-weighted sampling**: Dynamically balances class representation during training
+- **Targeted augmentation**: Applies more aggressive augmentation to underrepresented classes
+- **Two-phase training**: Specializes on underrepresented classes first
+- **Layer-specific learning rates**: Preserves feature extraction capabilities
+- **Advanced metrics**: Monitors per-class accuracy and weighted validation metrics
+
+### Usage
+
+The easiest way to run the balanced training is using the provided shell script:
+
+```
+./run_balanced_training.sh [data_dir] [model_dir]
+```
+
+Alternatively, you can run it manually:
+
+```
+# Pre-training phase focused on underrepresented classes
+python3 balanced_training.py --data_dir /path/to/dataset --model_dir ./models --pretrain --augmentation_level 3 --epochs 15
+
+# Main balanced training phase
+python3 balanced_training.py --data_dir /path/to/dataset --model_dir ./models --backbone resnet18 --epochs 50 --augmentation_level 2
+```
+
+### Parameters
+
+- `--data_dir`: Path to the dataset (required)
+- `--model_dir`: Directory to save models
+- `--backbone`: CNN backbone (resnet18, efficientnet_b0, mobilenet_v3_small)
+- `--pretrain`: Perform specialized pre-training on underrepresented classes
+- `--augmentation_level`: Intensity of data augmentation (0-3)
+- `--epochs`: Number of training epochs
+- `--learning_rate`: Base learning rate
+- `--batch_size`: Training batch size
+- `--patience`: Early stopping patience
+
+## 2. Bias Optimization Framework
+
+The `advanced_bias_tuning.py` script provides a way to find optimal bias parameters for the model predictions:
+
+### Key Features
+
+- **Multiple optimization methods**: Grid search, Bayesian optimization, and evolutionary algorithms
+- **Target distribution optimization**: Balances predictions toward desired class ratios
+- **Ground truth validation**: Can optimize using labeled validation data
+- **Parallel processing**: Efficiently explores parameter space
+- **Comprehensive visualizations**: Generates heatmaps and distribution comparisons
+
+### Usage
+
+The easiest way to run the bias optimization is using the provided shell script:
+
+```
+./optimize_bias_params.sh [image_dir] [model_path] [method]
+```
+
+Alternatively, you can run it manually:
+
+```
+# Grid search optimization
+python3 advanced_bias_tuning.py --image_dir /path/to/test_images --model ./models/hybrid_model.pth --method grid_search
+
+# Bayesian optimization with Optuna
+python3 advanced_bias_tuning.py --image_dir /path/to/test_images --model ./models/hybrid_model.pth --method optuna --trials 100
+
+# Test with optimized parameters
+python3 advanced_bias_tuning.py --image_dir /path/to/test_images --model ./models/hybrid_model.pth --test /path/to/image.jpg
+```
+
+### Parameters
+
+- `--image_dir`: Directory with test images (required)
+- `--model`: Path to the model weights
+- `--output_dir`: Directory to save optimization results
+- `--method`: Optimization method (grid_search, optuna, evolutionary)
+- `--trials`: Number of trials for Bayesian or evolutionary optimization
+- `--jobs`: Number of parallel jobs
+- `--use_ground_truth`: Use ground truth for optimization
+- `--ground_truth_file`: Path to ground truth JSON file
+- `--create_ground_truth`: Create ground truth file from directory structure
+- `--test`: Run a test with optimal parameters on a specific image
+
+## Prediction with Bias Parameters
+
+Once you've found optimal bias parameters, you can use them for prediction:
+
+```
+python3 predict_emotion.py --image /path/to/image.jpg --model ./models/hybrid_model.pth --angry_bias 4.5 --neutral_bias 2.8
+```
+
+## Results and Visualization
+
+The tools generate various visualizations to help you understand the results:
+
+- **Training plots**: Loss curves, accuracy per class, and weighted metrics
+- **Confusion matrix**: Class-wise prediction patterns
+- **Parameter space exploration**: Visualizations of the bias parameter search
+- **Distribution comparison**: Target vs. achieved class distribution
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgements
+
+This work builds upon the original enhanced emotion recognition model to solve the specific problem of class imbalance and bias in emotion recognition. 
