@@ -43,26 +43,52 @@ class AdvancedEmotionDataset(Dataset):
             self.transform = A.Compose([
                 # Resize with padding to maintain aspect ratio
                 A.LongestMaxSize(max_size=image_size),
-                A.PadIfNeeded(min_height=image_size, min_width=image_size, 
-                             border_mode=cv2.BORDER_CONSTANT, value=0),
+                A.PadIfNeeded(
+                    min_height=image_size, 
+                    min_width=image_size, 
+                    border_mode=cv2.BORDER_CONSTANT,
+                    value=0
+                ),
                 
-                # Mild spatial transformations that preserve facial features
-                A.HorizontalFlip(p=0.5),
-                A.ShiftScaleRotate(shift_limit=0.03, scale_limit=0.05, rotate_limit=10, 
-                                  border_mode=cv2.BORDER_CONSTANT, p=0.5),
+                # Very mild spatial transformations that preserve facial features
+                A.HorizontalFlip(p=0.3),  # Reduced probability
+                A.Affine(
+                    scale=(0.98, 1.02),  # Reduced scale range
+                    translate_percent=(-0.02, 0.02),  # Reduced translation
+                    rotate=(-5, 5),  # Reduced rotation
+                    p=0.3  # Reduced probability
+                ),
                 
-                # Carefully tuned intensity augmentations
+                # Color and lighting augmentations (more important for facial recognition)
                 A.OneOf([
-                    A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1),
-                    A.CLAHE(clip_limit=2.0, p=0.5),
-                    A.GaussianBlur(blur_limit=3, p=0.5),
+                    A.RandomBrightnessContrast(
+                        brightness_limit=0.1,  # Reduced brightness variation
+                        contrast_limit=0.1,    # Reduced contrast variation
+                        p=1.0
+                    ),
+                    A.CLAHE(
+                        clip_limit=1.5,  # Reduced clip limit
+                        tile_grid_size=(8, 8),
+                        p=1.0
+                    ),
+                    A.GaussianBlur(
+                        blur_limit=3,
+                        p=1.0
+                    ),
                 ], p=0.5),
                 
-                # Very mild noise that won't distort facial features
+                # Very mild noise and compression
                 A.OneOf([
-                    A.GaussNoise(p=0.5),
-                    A.ImageCompression(quality_lower=90, quality_upper=100, p=0.5),
-                ], p=0.3),
+                    A.GaussNoise(
+                        var_limit=(5.0, 20.0),
+                        p=1.0
+                    ),
+                    A.ImageCompression(
+                        quality_lower=97,
+                        quality_upper=100,
+                        p=1.0
+                    ),
+                ], p=0.2),  # Reduced probability
                 
                 # Normalize and convert to tensor
                 A.Normalize(mean=IMAGE_MEAN, std=IMAGE_STD),
@@ -73,8 +99,12 @@ class AdvancedEmotionDataset(Dataset):
             self.transform = A.Compose([
                 # Preserve aspect ratio in test mode
                 A.LongestMaxSize(max_size=image_size),
-                A.PadIfNeeded(min_height=image_size, min_width=image_size, 
-                             border_mode=cv2.BORDER_CONSTANT, value=0),
+                A.PadIfNeeded(
+                    min_height=image_size, 
+                    min_width=image_size, 
+                    border_mode=cv2.BORDER_CONSTANT,
+                    value=0
+                ),
                 A.Normalize(mean=IMAGE_MEAN, std=IMAGE_STD),
                 ToTensorV2(),
             ])

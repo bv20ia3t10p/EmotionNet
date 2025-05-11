@@ -1,23 +1,26 @@
 #!/bin/bash
-# High-accuracy emotion recognition model training script for Unix/Linux
 
-echo "Training high-accuracy emotion recognition model..."
+# Exit on any error
+set -e
 
-# Default parameters (can be customized)
+echo "Starting EmotionNet training..."
+
+# Default parameters
 DATA_DIR="./extracted/emotion/train"
 TEST_DIR="./extracted/emotion/test"
 MODEL_DIR="./models"
-BATCH_SIZE=32
-EPOCHS=50
-LEARNING_RATE=0.0001
+BATCH_SIZE=80
+EPOCHS=80
+LEARNING_RATE=0.001
 IMAGE_SIZE=224
-BACKBONES="efficientnet_b0 resnet18"
+BACKBONES=("efficientnet_b0" "efficientnet_b1")  # Array of backbones
 
-# Create models directory if it doesn't exist
+# Create model directory if it doesn't exist
 mkdir -p "$MODEL_DIR"
 
-# Run the training script using the new module structure
-python3 -m emotion_net.train \
+# Run training with error handling
+echo "Running training script..."
+if ! python3 -m emotion_net.train \
     --data_dir "$DATA_DIR" \
     --test_dir "$TEST_DIR" \
     --model_dir "$MODEL_DIR" \
@@ -25,6 +28,9 @@ python3 -m emotion_net.train \
     --epochs $EPOCHS \
     --learning_rate $LEARNING_RATE \
     --image_size $IMAGE_SIZE \
-    --backbones $BACKBONES
+    --backbones "${BACKBONES[@]}"; then
+    echo "Error: Training failed!"
+    exit 1
+fi
 
-echo "Training completed! The model is saved in the $MODEL_DIR directory." 
+echo "Training completed successfully!" 
