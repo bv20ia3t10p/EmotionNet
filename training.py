@@ -20,33 +20,60 @@ from torchvision import datasets
 
 def prepare_training_components(model, train_loader):
     print("🔹 Setting Up Training Components ==============================")
+    
+    # Calculate sample counts per class for class-balanced loss
+    samples_per_class = get_samples_per_class(TRAIN_PATH)
+    print(f"🔹 Class distribution: {samples_per_class}")
+    
     # Add class weights to handle class imbalance
     class_weights = compute_class_weights(TRAIN_PATH)
     print(f"🔹 Using class weights: {[round(w, 2) for w in class_weights]}")
 
-    # Use combined loss function for better training
-    criterion = CombinedLoss(
-        alpha=FOCAL_ALPHA,
-        gamma=FOCAL_GAMMA,
-        class_weights=class_weights,
-        label_smoothing=LABEL_SMOOTHING,
-        kl_weight=KL_WEIGHT
-    )
+    # Use improved combined loss function for better training
+    if os.environ.get('USE_CLASS_BALANCED_LOSS', '1') == '1':
+        print("🔹 Using Class-Balanced Loss for extreme imbalance handling")
+        criterion = CombinedLoss(
+            class_weights=class_weights,
+            samples_per_class=samples_per_class,
+            beta=float(os.environ.get('CB_BETA', 0.9999)),
+            gamma=FOCAL_GAMMA,
+            label_smoothing=LABEL_SMOOTHING,
+            kl_weight=KL_WEIGHT,
+            center_weight=float(os.environ.get('CENTER_WEIGHT', 0.005))
+        )
+    else:
+        print("🔹 Using standard Focal Loss with class weights")
+        criterion = FocalLoss(
+            alpha=FOCAL_ALPHA,
+            gamma=FOCAL_GAMMA,
+            class_weights=class_weights,
+            label_smoothing=LABEL_SMOOTHING,
+            scale_pos_weight=float(os.environ.get('SCALE_POS_WEIGHT', 1.2))
+        )
 
-    # Create optimizer with proper weight decay
-    # Don't apply weight decay to batch norm or bias parameters
+    # Create optimizer with proper weight decay and parameter grouping
+    # Group parameters for different weight decay application
     decay_parameters = []
     no_decay_parameters = []
+    head_parameters = []  # Higher learning rate for classifier head
 
     for name, param in model.named_parameters():
-        if 'bias' in name or 'bn' in name or 'norm' in name:
+        if 'classifier' in name or 'head' in name:
+            head_parameters.append(param)
+        elif 'bias' in name or 'bn' in name or 'norm' in name or 'layernorm' in name:
             no_decay_parameters.append(param)
         else:
             decay_parameters.append(param)
+    
+    # Get head learning rate multiplier
+    head_lr_multiplier = float(os.environ.get('HEAD_LR_MULTIPLIER', 10.0))
+    print(f"🔹 Using {head_lr_multiplier}x learning rate for classifier head")
 
+    # Create optimizer with parameter groups
     base_optimizer = optim.AdamW([
         {'params': decay_parameters, 'weight_decay': WEIGHT_DECAY},
-        {'params': no_decay_parameters, 'weight_decay': 0.0}
+        {'params': no_decay_parameters, 'weight_decay': 0.0},
+        {'params': head_parameters, 'weight_decay': WEIGHT_DECAY, 'lr': LEARNING_RATE * head_lr_multiplier}
     ], lr=LEARNING_RATE, betas=(0.9, 0.999))
 
     # Wrap with Lookahead optimizer if enabled (for large batch training)
@@ -104,16 +131,21 @@ def prepare_training_components(model, train_loader):
     else:
         swa = None
 
-    # Setup distillation loss if enabled
+    # Setup enhanced distillation loss if enabled
     distillation_enabled = int(os.environ.get('SELF_DISTILLATION_ENABLED', 0))
     if distillation_enabled:
         distill_start = int(os.environ.get('SELF_DISTILLATION_START', 100))
         distill_temp = float(os.environ.get('SELF_DISTILLATION_TEMP', 2.0))
         distill_alpha = float(os.environ.get('SELF_DISTILLATION_ALPHA', 0.3))
+        attention_beta = float(os.environ.get('ATTENTION_BETA', 0.1))
         print(
-            f"🔹 Self-distillation enabled, starting at epoch {distill_start}")
+            f"🔹 Enhanced self-distillation enabled, starting at epoch {distill_start}")
+        print(f"   - Temperature: {distill_temp}, Alpha: {distill_alpha}, Attention Beta: {attention_beta}")
         distill_criterion = DistillationLoss(
-            alpha=distill_alpha, temperature=distill_temp)
+            alpha=distill_alpha, 
+            temperature=distill_temp,
+            attention_beta=attention_beta
+        )
         teacher_model = None  # Will be loaded at the appropriate epoch
     else:
         distill_criterion = None
@@ -150,6 +182,13 @@ def compute_class_weights(dataset_path):
         weights = weights / np.min(weights)  # Normalize by minimum
 
     return weights.tolist()
+
+
+def get_samples_per_class(dataset_path):
+    """Count the number of samples per class in the dataset."""
+    stats = get_image_stats(dataset_path)
+    class_names = sorted(stats.keys())
+    return [stats[cls] for cls in class_names]
 
 
 def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_transform, cutmix_transform, scheduler, scaler=None, epoch=0, teacher_model=None, distill_criterion=None, distill_start=float('inf')):
@@ -221,174 +260,259 @@ def run_training_epoch(model, train_loader, criterion, optimizer, device, mixup_
     progress_bar = tqdm(enumerate(train_loader), total=len(train_loader))
 
     for batch_idx, (images, labels) in progress_bar:
-        data_time.update(time.time() - end)
+        try:
+            data_time.update(time.time() - end)
 
-        images, labels = images.to(device), labels.to(device)
+            # Ensure proper data types and dimensions
+            images = images.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
+            
+            # Check for NaN values in images
+            if torch.isnan(images).any():
+                print("⚠️ NaN values detected in input images. Skipping batch.")
+                continue
+                
+            # Store variables needed for accuracy calculation outside the if-blocks
+            is_mixup_or_cutmix = False
+            mixup_labels_a = None
+            mixup_labels_b = None
+            mixup_lam = 0.5
 
-        # Apply augmentation based on random selection and epoch-dependent probability
-        rand_choice = random.random()
+            with autocast() if USE_AMP else nullcontext():
+                # Extract features for attention transfer in distillation if needed
+                features = None
+                teacher_features = None
 
-        # Store variables needed for accuracy calculation outside the if-blocks
-        is_mixup_or_cutmix = False
-        mixup_labels_a = None
-        mixup_labels_b = None
-        mixup_lam = 0.5
+                # Apply data augmentation based on random selection
+                if rand_choice := random.random() < mixup_probability and epoch >= 1:
+                    # Apply Mixup
+                    try:
+                        mixed_images, labels_a, labels_b, lam = mixup_transform((images, labels))
+                        images = mixed_images.to(device, non_blocking=True)
 
-        with autocast() if USE_AMP else nullcontext():
-            if rand_choice < mixup_probability and epoch >= 1:  # Only apply mixup after first epoch
-                mixed_images, labels_a, labels_b, lam = mixup_transform(
-                    (images, labels))
-                images = mixed_images.to(device)
+                        # Store for accuracy calculation later
+                        is_mixup_or_cutmix = True
+                        mixup_labels_a = labels_a
+                        mixup_labels_b = labels_b
+                        mixup_lam = lam
 
-                # Store for accuracy calculation later
-                is_mixup_or_cutmix = True
-                mixup_labels_a = labels_a
-                mixup_labels_b = labels_b
-                mixup_lam = lam
+                        # Convert label indices to one-hot for mixup
+                        labels_a_one_hot = F.one_hot(labels_a, NUM_CLASSES).float()
+                        labels_b_one_hot = F.one_hot(labels_b, NUM_CLASSES).float()
+                        mixed_targets = lam * labels_a_one_hot + (1 - lam) * labels_b_one_hot
 
-                # Convert label indices to one-hot for mixup
-                labels_a_one_hot = F.one_hot(labels_a, NUM_CLASSES).float()
-                labels_b_one_hot = F.one_hot(labels_b, NUM_CLASSES).float()
-                mixed_targets = lam * labels_a_one_hot + \
-                    (1 - lam) * labels_b_one_hot
+                        # Forward pass
+                        if use_distillation and hasattr(model, 'extract_features'):
+                            outputs, features = model.extract_features(images, return_features=True)
+                        else:
+                            outputs = model(images)
 
-                # Forward pass
-                outputs = model(images)
+                        # Apply distillation if enabled
+                        if use_distillation:
+                            with torch.no_grad():
+                                if hasattr(teacher_model, 'extract_features'):
+                                    teacher_outputs, teacher_features = teacher_model.extract_features(
+                                        images, return_features=True)
+                                else:
+                                    teacher_outputs = teacher_model(images)
+                                    
+                            loss = distill_criterion(
+                                outputs, teacher_outputs, mixed_targets, criterion,
+                                features, teacher_features)
+                        else:
+                            # For early epochs, use simple cross entropy on the dominant label
+                            if epoch < 5:
+                                dominant_labels = labels_a if lam > 0.5 else labels_b
+                                loss = F.cross_entropy(outputs, dominant_labels)
+                            else:
+                                # Compute loss for mixed labels
+                                loss = criterion(outputs, mixed_targets)
+                    except Exception as e:
+                        print(f"⚠️ Error applying Mixup: {e}. Reverting to standard forward pass.")
+                        # Fallback to standard forward pass
+                        outputs = model(images)
+                        loss = criterion(outputs, labels)
+                        is_mixup_or_cutmix = False
 
-                # Apply distillation if enabled
-                if use_distillation:
-                    with torch.no_grad():
-                        teacher_outputs = teacher_model(images)
-                    loss = distill_criterion(
-                        outputs, teacher_outputs, mixed_targets, criterion)
-                else:
-                    # For early epochs, use simple cross entropy on the dominant label
-                    if epoch < 5:
-                        dominant_labels = labels_a if lam > 0.5 else labels_b
-                        loss = F.cross_entropy(outputs, dominant_labels)
+                elif random.random() < cutmix_probability + mixup_probability and epoch >= 3:
+                    # Apply CutMix
+                    try:
+                        mixed_images, labels_a, labels_b, lam = cutmix_transform((images, labels))
+                        images = mixed_images.to(device, non_blocking=True)
+
+                        # Store for accuracy calculation later
+                        is_mixup_or_cutmix = True
+                        mixup_labels_a = labels_a
+                        mixup_labels_b = labels_b
+                        mixup_lam = lam
+
+                        # Convert label indices to one-hot for cutmix
+                        labels_a_one_hot = F.one_hot(labels_a, NUM_CLASSES).float()
+                        labels_b_one_hot = F.one_hot(labels_b, NUM_CLASSES).float()
+                        mixed_targets = lam * labels_a_one_hot + (1 - lam) * labels_b_one_hot
+
+                        # Forward pass
+                        if use_distillation and hasattr(model, 'extract_features'):
+                            outputs, features = model.extract_features(images, return_features=True)
+                        else:
+                            outputs = model(images)
+
+                        # Apply distillation if enabled
+                        if use_distillation:
+                            with torch.no_grad():
+                                if hasattr(teacher_model, 'extract_features'):
+                                    teacher_outputs, teacher_features = teacher_model.extract_features(
+                                        images, return_features=True)
+                                else:
+                                    teacher_outputs = teacher_model(images)
+                                    
+                            loss = distill_criterion(
+                                outputs, teacher_outputs, mixed_targets, criterion,
+                                features, teacher_features)
+                        else:
+                            # For early epochs, use simple cross entropy on the dominant label
+                            if epoch < 5:
+                                dominant_labels = labels_a if lam > 0.5 else labels_b
+                                loss = F.cross_entropy(outputs, dominant_labels)
+                            else:
+                                # Compute loss for mixed labels
+                                loss = criterion(outputs, mixed_targets)
+                    except Exception as e:
+                        print(f"⚠️ Error applying CutMix: {e}. Reverting to standard forward pass.")
+                        # Fallback to standard forward pass
+                        outputs = model(images)
+                        loss = criterion(outputs, labels)
+                        is_mixup_or_cutmix = False
+
+                else:  # Standard forward pass
+                    # Forward pass with potential feature extraction for distillation
+                    if use_distillation and hasattr(model, 'extract_features'):
+                        outputs, features = model.extract_features(images, return_features=True)
                     else:
-                        # Compute loss for mixed labels
-                        loss = criterion(outputs, mixed_targets)
+                        outputs = model(images)
 
-            elif rand_choice < mixup_probability + cutmix_probability and epoch >= 3:  # Only apply cutmix after third epoch
-                mixed_images, labels_a, labels_b, lam = cutmix_transform(
-                    (images, labels))
-                images = mixed_images.to(device)
-
-                # Store for accuracy calculation later
-                is_mixup_or_cutmix = True
-                mixup_labels_a = labels_a
-                mixup_labels_b = labels_b
-                mixup_lam = lam
-
-                # Convert label indices to one-hot for cutmix
-                labels_a_one_hot = F.one_hot(labels_a, NUM_CLASSES).float()
-                labels_b_one_hot = F.one_hot(labels_b, NUM_CLASSES).float()
-                mixed_targets = lam * labels_a_one_hot + \
-                    (1 - lam) * labels_b_one_hot
-
-                # Forward pass
-                outputs = model(images)
-
-                # Apply distillation if enabled
-                if use_distillation:
-                    with torch.no_grad():
-                        teacher_outputs = teacher_model(images)
-                    loss = distill_criterion(
-                        outputs, teacher_outputs, mixed_targets, criterion)
-                else:
-                    # For early epochs, use simple cross entropy on the dominant label
-                    if epoch < 5:
-                        dominant_labels = labels_a if lam > 0.5 else labels_b
-                        loss = F.cross_entropy(outputs, dominant_labels)
+                    # Apply distillation if enabled
+                    if use_distillation:
+                        with torch.no_grad():
+                            if hasattr(teacher_model, 'extract_features'):
+                                teacher_outputs, teacher_features = teacher_model.extract_features(
+                                    images, return_features=True)
+                            else:
+                                teacher_outputs = teacher_model(images)
+                                
+                        loss = distill_criterion(
+                            outputs, teacher_outputs, labels, criterion,
+                            features, teacher_features)
                     else:
-                        # Compute loss for mixed labels
-                        loss = criterion(outputs, mixed_targets)
+                        loss = criterion(outputs, labels)
 
-            else:  # Standard forward pass
-                outputs = model(images)
+            # Check for NaN loss and skip if found
+            if torch.isnan(loss).any():
+                print("⚠️ NaN loss detected. Skipping batch update.")
+                continue
 
-                # Apply distillation if enabled
-                if use_distillation:
-                    with torch.no_grad():
-                        teacher_outputs = teacher_model(images)
-                    loss = distill_criterion(
-                        outputs, teacher_outputs, labels, criterion)
+            # Scale the loss according to accumulation steps
+            loss = loss / ACCUMULATION_STEPS
+
+            # Backward and optimize with optional mixed precision
+            if scaler is not None:
+                scaler.scale(loss).backward()
+
+                # Gradient accumulation - only update every ACCUMULATION_STEPS
+                if (batch_idx + 1) % ACCUMULATION_STEPS == 0:
+                    # Optional gradient clipping
+                    if GRAD_CLIP_VALUE > 0:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(
+                            model.parameters(), GRAD_CLIP_VALUE)
+
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
+
+                    # Step scheduler if it's a per-step scheduler
+                    if hasattr(scheduler, 'step_count'):  # OneCycleLR or CosineAnnealing*
+                        scheduler.step()
+            else:
+                loss.backward()
+
+                # Gradient accumulation - only update every ACCUMULATION_STEPS
+                if (batch_idx + 1) % ACCUMULATION_STEPS == 0:
+                    # Optional gradient clipping
+                    if GRAD_CLIP_VALUE > 0:
+                        torch.nn.utils.clip_grad_norm_(
+                            model.parameters(), GRAD_CLIP_VALUE)
+
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+                    # Step scheduler if it's a per-step scheduler
+                    if hasattr(scheduler, 'step_count'):  # OneCycleLR or CosineAnnealing*
+                        scheduler.step()
+
+            # Compute accuracy - using the stored mixup/cutmix variables
+            try:
+                # Get predictions (handle potential shape issues)
+                if len(outputs.shape) > 1:
+                    _, predicted = outputs.max(1)
                 else:
-                    loss = criterion(outputs, labels)
+                    predicted = (outputs > 0).long()  # Binary case fallback
+                
+                if is_mixup_or_cutmix and epoch >= 1:
+                    # If we used mixup/cutmix, use dominant label for accuracy
+                    dominant_labels = mixup_labels_a if mixup_lam > 0.5 else mixup_labels_b
+                    batch_correct = predicted.eq(dominant_labels).sum().item()
+                else:
+                    # Standard accuracy calculation
+                    batch_correct = predicted.eq(labels).sum().item()
 
-        # Scale the loss according to accumulation steps
-        loss = loss / ACCUMULATION_STEPS
+                # Update metrics
+                total_loss += loss.item() * ACCUMULATION_STEPS
+                batch_size = images.size(0)
+                total += batch_size
+                correct += batch_correct
 
-        # Backward and optimize with optional mixed precision
-        if scaler is not None:
-            scaler.scale(loss).backward()
+                losses.update(loss.item() * ACCUMULATION_STEPS, batch_size)
+                accs.update(100.0 * batch_correct / batch_size, batch_size)
+            except Exception as e:
+                print(f"⚠️ Error calculating accuracy: {e}")
+                # Continue without updating metrics
 
-            # Gradient accumulation - only update every ACCUMULATION_STEPS
-            if (batch_idx + 1) % ACCUMULATION_STEPS == 0:
-                # Optional gradient clipping
-                if GRAD_CLIP_VALUE > 0:
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        model.parameters(), GRAD_CLIP_VALUE)
+            batch_time.update(time.time() - end)
+            end = time.time()
 
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad()
-
-                # Step scheduler if it's a per-step scheduler
-                if hasattr(scheduler, 'step_count'):  # OneCycleLR or CosineAnnealing*
-                    scheduler.step()
-        else:
-            loss.backward()
-
-            # Gradient accumulation - only update every ACCUMULATION_STEPS
-            if (batch_idx + 1) % ACCUMULATION_STEPS == 0:
-                # Optional gradient clipping
-                if GRAD_CLIP_VALUE > 0:
-                    torch.nn.utils.clip_grad_norm_(
-                        model.parameters(), GRAD_CLIP_VALUE)
-
-                optimizer.step()
-                optimizer.zero_grad()
-
-                # Step scheduler if it's a per-step scheduler
-                if hasattr(scheduler, 'step_count'):  # OneCycleLR or CosineAnnealing*
-                    scheduler.step()
-
-        # Compute accuracy - using the stored mixup/cutmix variables
-        _, predicted = outputs.max(1)
-        if is_mixup_or_cutmix and epoch >= 1:
-            # If we used mixup/cutmix, use dominant label for accuracy
-            dominant_labels = mixup_labels_a if mixup_lam > 0.5 else mixup_labels_b
-            batch_correct = predicted.eq(dominant_labels).sum().item()
-        else:
-            # Standard accuracy calculation
-            batch_correct = predicted.eq(labels).sum().item()
-
-        # Update metrics
-        total_loss += loss.item() * ACCUMULATION_STEPS
-        batch_size = images.size(0)
-        total += batch_size
-        correct += batch_correct
-
-        losses.update(loss.item() * ACCUMULATION_STEPS, batch_size)
-        accs.update(100.0 * batch_correct / batch_size, batch_size)
-        batch_time.update(time.time() - end)
-        end = time.time()
-
-        # Update progress bar every 10 batches
-        if batch_idx % 10 == 0:
-            progress_bar.set_description(
-                f'Batch {batch_idx}/{len(train_loader)}: '
-                f'Loss: {losses.val:.4f}, '
-                f'Acc: {accs.val:.2f}%, '
-                f'Time: {batch_time.val:.2f}s'
-            )
+            # Update progress bar every few batches
+            if batch_idx % 10 == 0:
+                progress_bar.set_description(
+                    f'Batch {batch_idx}/{len(train_loader)}: '
+                    f'Loss: {losses.val:.4f}, '
+                    f'Acc: {accs.val:.2f}%, '
+                    f'Time: {batch_time.val:.2f}s'
+                )
+                
+        except RuntimeError as e:
+            if 'out of memory' in str(e):
+                print(f"⚠️ CUDA out of memory in batch {batch_idx}. Skipping batch and clearing cache.")
+                torch.cuda.empty_cache()
+                continue
+            elif 'shape mismatch' in str(e) or 'dimension' in str(e) or 'size' in str(e):
+                print(f"⚠️ Dimension error in batch {batch_idx}: {e}. Skipping batch.")
+                continue
+            else:
+                print(f"⚠️ Runtime error in batch {batch_idx}: {e}")
+                raise e
+        except Exception as e:
+            print(f"⚠️ Unexpected error in batch {batch_idx}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
 
     # Calculate final metrics
-    train_loss = total_loss / len(train_loader)
-    train_acc = 100.0 * correct / total
+    train_loss = total_loss / len(train_loader) if len(train_loader) > 0 else float('inf')
+    train_acc = 100.0 * correct / total if total > 0 else 0.0
+
+    # Release memory
+    torch.cuda.empty_cache()
 
     return train_loss, train_acc
 
@@ -609,36 +733,91 @@ def train_model():
 
 
 def prepare_dataloaders(train_path, test_path):
-    """Prepare the train and validation dataloaders"""
+    """Prepare the train and validation dataloaders with enhanced augmentations"""
     print(f"🔹 Using dataset paths: Train={train_path}, Test={test_path}")
 
-    # Setup transforms directly instead of using get_transforms
-    # Training transformation pipeline
+    # Define emotion-specific advanced augmentations
+    class RandomGaussianBlur(nn.Module):
+        """Apply Gaussian blur with random sigma"""
+        def __init__(self, kernel_size=3, sigma_range=(0.1, 1.5), p=0.3):
+            super().__init__()
+            self.kernel_size = kernel_size
+            self.sigma_range = sigma_range
+            self.p = p
+        
+        def forward(self, img):
+            if random.random() < self.p:
+                sigma = random.uniform(self.sigma_range[0], self.sigma_range[1])
+                return transforms.functional.gaussian_blur(img, self.kernel_size, [sigma, sigma])
+            return img
+    
+    class RandomGrayScale(nn.Module):
+        """Apply grayscale with probability p"""
+        def __init__(self, p=0.2):
+            super().__init__()
+            self.p = p
+            self.grayscale = transforms.Grayscale(3)
+        
+        def forward(self, img):
+            if random.random() < self.p:
+                return self.grayscale(img)
+            return img
+    
+    class RandomSharpen(nn.Module):
+        """Apply random sharpening"""
+        def __init__(self, p=0.3):
+            super().__init__()
+            self.p = p
+        
+        def forward(self, img):
+            if random.random() < self.p:
+                # Convert tensor to PIL for sharpening
+                if isinstance(img, torch.Tensor):
+                    img_np = img.permute(1, 2, 0).cpu().numpy()
+                    img_pil = transforms.ToPILImage()(img)
+                else:
+                    img_pil = img
+                
+                # Apply sharpening filter
+                enhancer = transforms.functional.adjust_sharpness
+                factor = random.uniform(1.0, 3.0)  # Adjust sharpness factor
+                return enhancer(img_pil, factor)
+            return img
+
+    # Enhanced training transformation pipeline with progressive complexity
     transform_train = transforms.Compose([
-        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomVerticalFlip(p=0.1),  # Reduced probability
-        transforms.RandomRotation(degrees=DEGREES),
+        # Resize with a slight random variation for better generalization
+        transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(0.8, 1.0), ratio=(0.9, 1.1)),
+        
+        # Spatial augmentations
+        transforms.RandomHorizontalFlip(p=0.5),  # Flip horizontally
+        transforms.RandomRotation(degrees=DEGREES, fill=0),
+        transforms.RandomAffine(degrees=0, translate=TRANSLATE, scale=SCALE, fill=0),
+        
+        # Color augmentations
         transforms.ColorJitter(brightness=BRIGHTNESS, contrast=CONTRAST,
                                saturation=SATURATION, hue=HUE) if USE_COLOR_JITTER else nn.Identity(),
-        transforms.RandomAffine(
-            degrees=DEGREES, translate=TRANSLATE, scale=SCALE),
+        RandomGrayScale(p=0.15),  # Occasional grayscale for robustness
+        RandomGaussianBlur(p=0.25),  # Occasional blur for robustness
+        
+        # Convert to tensor and normalize
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[
-                             0.229, 0.224, 0.225]),
-        transforms.RandomErasing(
-            p=ERASING_PROB) if USE_RANDOM_ERASING else nn.Identity()
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        
+        # Additional augmentations after normalization
+        transforms.RandomErasing(p=ERASING_PROB, scale=(0.02, 0.15), ratio=(0.3, 3.3)) 
+            if USE_RANDOM_ERASING else nn.Identity()
     ])
 
-    # Validation transformation pipeline
+    # Multi-scale validation transformation for test-time augmentation
     transform_val = transforms.Compose([
-        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+        transforms.Resize((int(IMAGE_SIZE * 1.1), int(IMAGE_SIZE * 1.1))),  # Slightly larger
+        transforms.CenterCrop((IMAGE_SIZE, IMAGE_SIZE)),  # Then center crop
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[
-                             0.229, 0.224, 0.225])
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-    # Create train dataset using standard ImageFolder instead of EmotionDataset
+    # Create datasets using standard ImageFolder
     train_dataset = datasets.ImageFolder(
         root=train_path,
         transform=transform_train
@@ -649,27 +828,31 @@ def prepare_dataloaders(train_path, test_path):
         root=test_path,
         transform=transform_val
     )
-
-    # Create DataLoaders
+    
+    # Print dataset statistics
+    print(f"Total classes in training dataset: {len(train_dataset.classes)}")
+    print(f"Total classes in validation dataset: {len(val_dataset.classes)}")
+    print(f"Total samples in validation dataset: {len(val_dataset)}")
+    
+    # Create DataLoaders with optimal settings for large batch training
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,
         shuffle=True,
-        num_workers=4,
-        pin_memory=True
+        num_workers=min(8, os.cpu_count() or 2),  # Optimize workers based on CPU
+        pin_memory=True,
+        persistent_workers=True if torch.cuda.is_available() else False,  # Keep workers alive between epochs
+        drop_last=True,  # Avoid small last batch
+        prefetch_factor=2  # Prefetch batches
     )
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=BATCH_SIZE,
         shuffle=False,
-        num_workers=4,
-        pin_memory=True
+        num_workers=min(4, os.cpu_count() or 1),
+        pin_memory=True,
+        persistent_workers=True if torch.cuda.is_available() else False
     )
-
-    # Print stats about the datasets
-    print(f"Total classes in training dataset: {len(train_dataset.classes)}")
-    print(f"Total classes in validation dataset: {len(val_dataset.classes)}")
-    print(f"Total samples in validation dataset: {len(val_dataset)}")
 
     return train_loader, val_loader

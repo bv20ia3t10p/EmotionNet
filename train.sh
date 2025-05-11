@@ -18,7 +18,7 @@ export ROOT="./extracted"
 export DATASET_PATH="${ROOT}/emotion"
 export MODEL_PATH="${ROOT}/emotion_convnext_model.pth"
 export MODEL_TYPE="ConvNeXtEmoteNet"
-export BACKBONE="convnext_large"
+export BACKBONE="convnext_xlarge"
 export IMAGE_SIZE="224"
 # Default paths - using original dataset
 export TRAIN_PATH="${DATASET_PATH}/train"
@@ -29,7 +29,7 @@ export MODEL_BALANCE_DATASET="0"
 # TRAINING PARAMETERS
 #==============================================================================
 export BATCH_SIZE="128"                # Increased from 64 to 128
-export LEARNING_RATE="0.00003"         # Further reduced for stability with larger batch
+export LEARNING_RATE="0.0005"          # Optimal learning rate based on LR finder plot
 export NUM_EPOCHS="400"                # Maintain total training epochs
 #==============================================================================
 # OPTIMIZATION SETTINGS

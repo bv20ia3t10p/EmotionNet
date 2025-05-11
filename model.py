@@ -5,6 +5,7 @@ from config import *
 import timm # type: ignore
 import math
 import os
+import numpy as np
 
 
 # ==============================================================================
@@ -202,7 +203,7 @@ class ConvNeXtEmoteNet(nn.Module):
         backbone: Base ConvNeXt model from timm
         pretrained: Whether to use pretrained weights
     """
-    def __init__(self, backbone="convnext_base", pretrained=True):
+    def __init__(self, backbone="convnext_xlarge", pretrained=True):
         super(ConvNeXtEmoteNet, self).__init__()
         from config import NUM_CLASSES, HEAD_DROPOUT, FEATURE_DROPOUT
         
@@ -228,17 +229,20 @@ class ConvNeXtEmoteNet(nn.Module):
             feature_dim = 768
         elif 'base' in backbone:
             feature_dim = 1024
+        elif 'xlarge' in backbone:
+            feature_dim = 2048
         else:  # large
             feature_dim = 1536
         
-        # CBAM attention module (combined channel and spatial attention)
-        self.cbam = CBAM(feature_dim, reduction_ratio=8)
+        # Global Context Attention Module - captures long-range dependencies
+        self.global_context = GlobalContextBlock(feature_dim, reduction_ratio=16)
         
         # Multi-scale attention mechanisms for better feature focus
         self.eca_attention = ECABlock(feature_dim)
-        self.se_attention = SEBlock(feature_dim)
+        self.se_attention = SEBlock(feature_dim, reduction=4)
+        self.cbam = CBAM(feature_dim, reduction_ratio=8)
         
-        # Dynamic channel calibration
+        # Improved Dynamic Channel Calibration with bottleneck
         self.channel_calibration = nn.Sequential(
             nn.Conv2d(feature_dim, feature_dim // 4, kernel_size=1),
             nn.BatchNorm2d(feature_dim // 4),
@@ -247,46 +251,47 @@ class ConvNeXtEmoteNet(nn.Module):
             nn.Sigmoid()
         )
         
-        # Feature refinement with batch normalization
+        # Enhanced Feature Refinement with normalization and residual connections
+        output_dim = 1536  # Increased from 1024 to better handle X-Large features
         self.feature_refine = nn.Sequential(
-            nn.Conv2d(feature_dim, 1024, kernel_size=1),
-            nn.BatchNorm2d(1024),
-            nn.SiLU(inplace=True),  # Using SiLU instead of GELU
+            nn.Conv2d(feature_dim, output_dim, kernel_size=1),
+            nn.BatchNorm2d(output_dim),
+            nn.SiLU(inplace=True),
             nn.Dropout2d(FEATURE_DROPOUT)
         )
         
-        # Multi-scale feature pyramid
+        # Multi-scale feature pyramid with dilated convolutions for larger receptive field
+        pyramid_dim = 768  # Increased from 512 to better handle X-Large features
         self.pyramid_layers = nn.ModuleList([
             nn.Sequential(
-                nn.Conv2d(feature_dim, 512, kernel_size=3, padding=i+1, dilation=i+1),
-                nn.BatchNorm2d(512),
+                nn.Conv2d(feature_dim, pyramid_dim, kernel_size=3, padding=i+1, dilation=i+1),
+                nn.BatchNorm2d(pyramid_dim),
                 nn.SiLU(inplace=True)
             ) for i in range(3)  # 3 parallel paths with different receptive fields
         ])
         
-        # Pyramid fusion
+        # Bottleneck-based Pyramid fusion with improved efficiency
         self.pyramid_fusion = nn.Sequential(
-            nn.Conv2d(512 * 3, 1024, kernel_size=1),
-            nn.BatchNorm2d(1024),
+            nn.Conv2d(pyramid_dim * 3, pyramid_dim, kernel_size=1),  # Reduce channels first
+            nn.BatchNorm2d(pyramid_dim),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(pyramid_dim, output_dim, kernel_size=1),     # Then expand to final dimension
+            nn.BatchNorm2d(output_dim),
             nn.SiLU(inplace=True)
         )
         
         # Residual connection for feature refinement
-        self.feature_proj = nn.Conv2d(feature_dim, 1024, kernel_size=1) if feature_dim != 1024 else nn.Identity()
+        self.feature_proj = nn.Conv2d(feature_dim, output_dim, kernel_size=1, bias=False) if feature_dim != output_dim else nn.Identity()
         
-        # Global pooling operations
+        # Enhanced global pooling with learnable weights
         self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.global_max_pool = nn.AdaptiveMaxPool2d((1, 1))
+        self.pool_weights = nn.Parameter(torch.FloatTensor([0.5, 0.5]))
         
-        # Improved pooling with learnable weights
-        self.pool_weights = nn.Parameter(torch.ones(2) / 2)
-        
-        # Dropout for regularization
-        self.dropout = nn.Dropout(HEAD_DROPOUT)
-        
-        # Enhanced classifier with layer normalization and SiLU
+        # Advanced classifier with layer normalization
+        classifier_dim = output_dim * 2  # Doubled for concatenated pooling methods
         self.classifier = nn.Sequential(
-            nn.Linear(1024 * 2, 768),
+            nn.Linear(classifier_dim, 768),
             nn.LayerNorm(768),
             nn.SiLU(inplace=True),
             nn.Dropout(HEAD_DROPOUT),
@@ -296,22 +301,17 @@ class ConvNeXtEmoteNet(nn.Module):
             nn.SiLU(inplace=True),
             nn.Dropout(HEAD_DROPOUT * 0.8),
             
-            nn.Linear(384, 192),
-            nn.LayerNorm(192),
-            nn.SiLU(inplace=True),
-            nn.Dropout(HEAD_DROPOUT * 0.6),
-            
-            nn.Linear(192, NUM_CLASSES)
+            nn.Linear(384, NUM_CLASSES)
         )
         
         # Initialize weights
         self._initialize_weights()
     
     def _initialize_weights(self):
-        """Initialize model weights with appropriate distributions."""
-        # Initialize the new layers we added
+        """Initialize model weights with proper distributions for stable training."""
         for m in [self.feature_refine, self.classifier, self.feature_proj, 
-                 self.pyramid_fusion, self.channel_calibration, *self.pyramid_layers]:
+                 self.pyramid_fusion, self.channel_calibration, self.global_context, 
+                 *self.pyramid_layers]:
             for layer in m.modules():
                 if isinstance(layer, nn.Conv2d):
                     nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
@@ -319,8 +319,7 @@ class ConvNeXtEmoteNet(nn.Module):
                         nn.init.zeros_(layer.bias)
                 elif isinstance(layer, (nn.BatchNorm2d, nn.LayerNorm)):
                     nn.init.ones_(layer.weight)
-                    if layer.bias is not None:
-                        nn.init.zeros_(layer.bias)
+                    nn.init.zeros_(layer.bias)
                 elif isinstance(layer, nn.Linear):
                     # Use specialized initialization for final layer
                     if layer == list(self.classifier.modules())[-1]:
@@ -332,6 +331,8 @@ class ConvNeXtEmoteNet(nn.Module):
     
     def forward(self, x):
         """Forward pass through the model."""
+        batch_size = x.shape[0]
+        
         # Optimize memory format if on CUDA
         if self.channels_last and torch.cuda.is_available():
             x = x.contiguous(memory_format=torch.channels_last)
@@ -339,48 +340,162 @@ class ConvNeXtEmoteNet(nn.Module):
         # Extract features from backbone
         features = self.backbone(x)
         
-        # Apply multi-scale attention mechanisms
-        cbam_attended = self.cbam(features)
-        eca_attended = self.eca_attention(features)
-        se_attended = self.se_attention(features)
+        # Apply multi-scale attention mechanisms with weighted combination
+        cbam_features = self.cbam(features)
+        eca_features = self.eca_attention(features)
+        se_features = self.se_attention(features)
+        gc_features = self.global_context(features)
         
-        # Combine attention mechanisms using learned weights
-        # Add residual connection from original features
-        features = cbam_attended + eca_attended + se_attended + features
+        # Combine attention features with residual connection
+        features = features + cbam_features + eca_features + se_features + gc_features
         
         # Apply dynamic channel calibration
         channel_weights = self.channel_calibration(features)
-        features = features * channel_weights
+        calibrated_features = features * channel_weights
         
         # Apply multi-scale feature pyramid
         pyramid_features = []
-        for layer in self.pyramid_layers:
-            pyramid_features.append(layer(features))
+        for pyramid_layer in self.pyramid_layers:
+            pyramid_features.append(pyramid_layer(calibrated_features))
         
         # Fuse pyramid features
         pyramid_output = self.pyramid_fusion(torch.cat(pyramid_features, dim=1))
         
         # Apply feature refinement with residual connection
-        refined = self.feature_refine(features)
-        residual = self.feature_proj(features)
-        refined = refined + residual + pyramid_output
+        refined_features = self.feature_refine(calibrated_features)
+        residual_features = self.feature_proj(calibrated_features)
+        fused_features = refined_features + residual_features + pyramid_output
         
-        # Apply weighted pooling with learnable weights
+        # Apply weighted global pooling
         pool_weights = F.softmax(self.pool_weights, dim=0)
-        avg_pool = self.global_avg_pool(refined).view(refined.size(0), -1)
-        max_pool = self.global_max_pool(refined).view(refined.size(0), -1)
+        avg_pooled = self.global_avg_pool(fused_features).view(batch_size, -1)
+        max_pooled = self.global_max_pool(fused_features).view(batch_size, -1)
         
-        # Weighted combination of pooling methods
-        x = torch.cat([
-            pool_weights[0] * avg_pool + pool_weights[1] * max_pool,
-            max_pool
-        ], dim=1)
+        # Weighted combination of pooling outputs plus concatenation
+        weighted_pool = pool_weights[0] * avg_pooled + pool_weights[1] * max_pooled
+        pooled_features = torch.cat([weighted_pool, max_pooled], dim=1)
         
-        # Apply dropout and classification
-        x = self.dropout(x)
-        x = self.classifier(x)
+        # Apply classification
+        logits = self.classifier(pooled_features)
         
-        return x
+        return logits
+
+    def extract_features(self, x, return_features=True):
+        """Extract intermediate features for knowledge distillation.
+        
+        Returns both the final predictions and intermediate feature maps
+        that can be used for attention transfer in distillation.
+        
+        Args:
+            x: Input tensor
+            return_features: Whether to return intermediate features
+            
+        Returns:
+            tuple: (logits, features) if return_features=True, else logits
+        """
+        batch_size = x.shape[0]
+        
+        # Determine output dimension based on backbone
+        if hasattr(self, 'feature_refine'):
+            output_dim = self.feature_refine[0].out_channels
+        else:
+            output_dim = 1536  # Default if not found
+        
+        # Optimize memory format if on CUDA
+        if self.channels_last and torch.cuda.is_available():
+            x = x.contiguous(memory_format=torch.channels_last)
+        
+        # Extract features from backbone
+        backbone_features = self.backbone(x)
+        
+        # Apply attention mechanisms
+        cbam_features = self.cbam(backbone_features)
+        eca_features = self.eca_attention(backbone_features)
+        se_features = self.se_attention(backbone_features)
+        gc_features = self.global_context(backbone_features)
+        
+        # Combine attention features with residual connection
+        features = backbone_features + cbam_features + eca_features + se_features + gc_features
+        
+        # Apply dynamic channel calibration
+        channel_weights = self.channel_calibration(features)
+        calibrated_features = features * channel_weights
+        
+        # Apply multi-scale feature pyramid
+        pyramid_features = []
+        for pyramid_layer in self.pyramid_layers:
+            pyramid_features.append(pyramid_layer(calibrated_features))
+        
+        # Fuse pyramid features
+        pyramid_output = self.pyramid_fusion(torch.cat(pyramid_features, dim=1))
+        
+        # Apply feature refinement with residual connection
+        refined_features = self.feature_refine(calibrated_features)
+        residual_features = self.feature_proj(calibrated_features)
+        fused_features = refined_features + residual_features + pyramid_output
+        
+        # Apply weighted global pooling
+        pool_weights = F.softmax(self.pool_weights, dim=0)
+        avg_pooled = self.global_avg_pool(fused_features).view(batch_size, -1)
+        max_pooled = self.global_max_pool(fused_features).view(batch_size, -1)
+        
+        # Weighted combination of pooling outputs plus concatenation
+        weighted_pool = pool_weights[0] * avg_pooled + pool_weights[1] * max_pooled
+        pooled_features = torch.cat([weighted_pool, max_pooled], dim=1)
+        
+        # Apply classification
+        logits = self.classifier(pooled_features)
+        
+        if return_features:
+            # Return intermediate features at multiple levels for attention transfer
+            return logits, [backbone_features, calibrated_features, fused_features]
+        else:
+            return logits
+
+
+# Global Context Block to capture long-range dependencies 
+class GlobalContextBlock(nn.Module):
+    """Global Context Block captures long-range dependencies.
+    
+    Inspired by GCNet and Non-local Neural Networks, but optimized
+    for emotion recognition tasks with improved efficiency.
+    
+    Args:
+        inplanes: Number of input channels
+        reduction_ratio: Channel reduction ratio for bottleneck
+    """
+    def __init__(self, inplanes, reduction_ratio=16):
+        super(GlobalContextBlock, self).__init__()
+        self.inplanes = inplanes
+        self.reduction_ratio = reduction_ratio
+        self.bottleneck_dim = inplanes // reduction_ratio
+        
+        # Context modeling with spatial attention
+        self.context_modeling = nn.Sequential(
+            nn.Conv2d(inplanes, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+        
+        # Channel transform for feature aggregation
+        self.channel_transform = nn.Sequential(
+            nn.Conv2d(inplanes, self.bottleneck_dim, kernel_size=1),
+            nn.LayerNorm([self.bottleneck_dim, 1, 1]),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(self.bottleneck_dim, inplanes, kernel_size=1)
+        )
+        
+    def forward(self, x):
+        # Generate attention map
+        context_mask = self.context_modeling(x)
+        
+        # Apply attention and pool globally
+        context = x * context_mask
+        context = torch.sum(context, dim=(2, 3), keepdim=True)
+        
+        # Transform channels and apply to input as residual
+        transformed = self.channel_transform(context)
+        
+        return x + transformed
 
 
 # CBAM: Convolutional Block Attention Module
@@ -430,7 +545,7 @@ class CBAM(nn.Module):
 # LOSS FUNCTIONS
 # ==============================================================================
 class FocalLoss(nn.Module):
-    """Enhanced Focal Loss with label smoothing.
+    """Enhanced Focal Loss with label smoothing and class balancing.
     
     This loss function focuses more on hard examples and
     reduces overfitting through label smoothing.
@@ -440,142 +555,355 @@ class FocalLoss(nn.Module):
         gamma: Focusing parameter (higher = more focus on hard examples)
         class_weights: Optional weights for class imbalance
         label_smoothing: Label smoothing factor (0-1)
+        scale_pos_weight: Factor to scale positive class weights for better handling of imbalance
     """
-    def __init__(self, alpha=1, gamma=2, class_weights=None, label_smoothing=0.1):
+    def __init__(self, alpha=1, gamma=2, class_weights=None, label_smoothing=0.1, scale_pos_weight=1.0):
         super(FocalLoss, self).__init__()
         from config import NUM_CLASSES
         self.alpha = alpha
         self.gamma = gamma
-        self.class_weights = class_weights
+        self.scale_pos_weight = scale_pos_weight
         self.device = None
         self.label_smoothing = label_smoothing
         self.num_classes = NUM_CLASSES
+        
+        # If class weights provided, convert to tensor and normalize
+        if class_weights is not None:
+            self.class_weights = torch.FloatTensor(class_weights)
+            # Scale the weights for better numeric stability
+            self.class_weights = self.class_weights / self.class_weights.mean()
+        else:
+            self.class_weights = None
 
     def forward(self, inputs, targets):
         """Forward pass to compute loss."""
         if self.device is None:
             self.device = inputs.device
+            if self.class_weights is not None:
+                self.class_weights = self.class_weights.to(self.device)
             
         # Handle both one-hot encoded and class index targets
         if len(targets.shape) > 1 and targets.shape[1] == self.num_classes:
             # For mixup/cutmix (soft targets)
             log_probs = F.log_softmax(inputs, dim=1)
-            loss = -(targets * log_probs).sum(dim=1)
+            probs = F.softmax(inputs, dim=1)
             
-            # Apply focal weighting
-            pt = torch.exp(-loss)
-            focal_weight = self.alpha * (1 - pt) ** self.gamma
-            return (focal_weight * loss).mean()
+            # Apply class weights if provided
+            if self.class_weights is not None:
+                # Expand weights to batch size
+                weights = self.class_weights.expand(targets.size(0), -1)
+                # Apply weights to targets
+                weighted_targets = targets * weights
+                # Normalize targets back to sum to 1
+                weighted_targets = weighted_targets / weighted_targets.sum(dim=1, keepdim=True)
+                loss = -(weighted_targets * log_probs).sum(dim=1)
+            else:
+                loss = -(targets * log_probs).sum(dim=1)
+            
+            # Calculate focal weight based on prediction probability for each class
+            focal_weights = torch.zeros_like(probs)
+            for c in range(self.num_classes):
+                focal_weights[:, c] = (1 - probs[:, c]).pow(self.gamma) * targets[:, c]
+            focal_weight = focal_weights.sum(dim=1)
+            
+            return (self.alpha * focal_weight * loss).mean()
         else:
             # For standard class indices
+            # Apply label smoothing - convert to one-hot first
+            targets_one_hot = F.one_hot(targets, self.num_classes).float()
+            
+            # Apply label smoothing
+            smoothed_targets = targets_one_hot * (1 - self.label_smoothing) + self.label_smoothing / self.num_classes
+            
+            # Calculate loss with smoothed targets
+            log_probs = F.log_softmax(inputs, dim=1)
+            probs = F.softmax(inputs, dim=1)
+            
+            # Apply class weights if provided
             if self.class_weights is not None:
-                weight = torch.FloatTensor(self.class_weights).to(self.device)
-                BCE_loss = F.cross_entropy(inputs, targets, weight=weight, 
-                                        reduction='none', label_smoothing=self.label_smoothing)
+                # Get weights for each sample based on its class
+                sample_weights = self.class_weights[targets]
+                weighted_targets = smoothed_targets * sample_weights.unsqueeze(1)
+                loss = -(weighted_targets * log_probs).sum(dim=1)
             else:
-                BCE_loss = F.cross_entropy(inputs, targets, 
-                                        reduction='none', label_smoothing=self.label_smoothing)
+                loss = -(smoothed_targets * log_probs).sum(dim=1)
+            
+            # Calculate focal weight based on prediction probability of true class
+            batch_size = inputs.size(0)
+            focal_weight = torch.zeros(batch_size, device=self.device)
+            
+            for i in range(batch_size):
+                focal_weight[i] = (1 - probs[i, targets[i]]).pow(self.gamma)
                 
-            pt = torch.exp(-BCE_loss)
-            F_loss = self.alpha * (1 - pt) ** self.gamma * BCE_loss
-            return F_loss.mean()
+            # Apply scale_pos_weight for minority classes if class weights are provided
+            if self.class_weights is not None:
+                # Scale focal weight by the class weight to emphasize minority classes
+                focal_weight = focal_weight * self.scale_pos_weight
+                
+            return (self.alpha * focal_weight * loss).mean()
+
+
+class ClassBalancedLoss(nn.Module):
+    """Class Balanced Loss for handling severe class imbalance.
+    
+    Implements effective number of samples to better handle class imbalance,
+    particularly useful for datasets with long-tailed distributions.
+    
+    Args:
+        samples_per_class: List of sample counts for each class
+        beta: Hyperparameter for controlling effective number of samples (0-1)
+        gamma: Focusing parameter for focal loss component
+        loss_type: Base loss type ('focal', 'ce', 'bce')
+    """
+    def __init__(self, samples_per_class, beta=0.9999, gamma=2.0, loss_type='focal'):
+        super(ClassBalancedLoss, self).__init__()
+        from config import NUM_CLASSES
+        self.beta = beta
+        self.gamma = gamma
+        self.loss_type = loss_type
+        self.num_classes = NUM_CLASSES
+        self.device = None
+        
+        # Calculate effective number of samples and CB weights
+        effective_num = 1.0 - np.power(beta, samples_per_class)
+        weights = (1.0 - beta) / np.array(effective_num)
+        # Normalize weights
+        weights = weights / np.sum(weights) * NUM_CLASSES
+        self.weights = torch.FloatTensor(weights)
+        
+    def forward(self, inputs, targets):
+        if self.device is None:
+            self.device = inputs.device
+            self.weights = self.weights.to(self.device)
+            
+        # Handle both one-hot encoded and class index targets
+        if len(targets.shape) > 1 and targets.shape[1] == self.num_classes:
+            # For mixup/cutmix (soft targets)
+            if self.loss_type == 'focal':
+                probs = F.softmax(inputs, dim=1)
+                weighted_probs = probs * targets
+                focal_weights = torch.pow(1 - weighted_probs.sum(dim=1), self.gamma)
+                
+                # Apply CB weights
+                cb_loss = 0
+                for c in range(self.num_classes):
+                    target_c = targets[:, c]
+                    pred_c = probs[:, c]
+                    # CB weight for this class
+                    cb_loss += -self.weights[c] * target_c * torch.log(pred_c + 1e-7) * focal_weights
+                
+                return cb_loss.mean()
+            else:
+                # Cross entropy for mixup
+                weighted_targets = targets * self.weights.unsqueeze(0)
+                weighted_targets = weighted_targets / weighted_targets.sum(dim=1, keepdim=True) * targets.sum(dim=1, keepdim=True)
+                log_probs = F.log_softmax(inputs, dim=1)
+                return -torch.sum(weighted_targets * log_probs) / inputs.size(0)
+        else:
+            # For standard class indices
+            log_probs = F.log_softmax(inputs, dim=1)
+            targets_one_hot = F.one_hot(targets, self.num_classes).float()
+            
+            if self.loss_type == 'focal':
+                # Focal loss with CB weights
+                probs = F.softmax(inputs, dim=1)
+                focal_weights = torch.pow(1 - probs.gather(1, targets.unsqueeze(1)), self.gamma)
+                cb_weights = self.weights[targets]
+                sample_weights = focal_weights.squeeze() * cb_weights
+                loss = -log_probs.gather(1, targets.unsqueeze(1))
+                return (loss.squeeze() * sample_weights).mean()
+            else:
+                # CE with CB weights
+                cb_weights = self.weights[targets]
+                loss = -log_probs.gather(1, targets.unsqueeze(1))
+                return (loss.squeeze() * cb_weights).mean()
 
 
 class CombinedLoss(nn.Module):
     """
-    Combined loss function with:
-    1. Focal loss for handling class imbalance
+    Advanced combined loss function with:
+    1. Class-balanced focal loss for handling imbalance
     2. Label smoothing for regularization
     3. KL divergence for soft targets
+    4. Center loss component for better feature clustering
+    
+    Provides best performance for emotion recognition with imbalanced datasets.
     """
-    def __init__(self, alpha=1.0, gamma=2.0, class_weights=None, label_smoothing=0.1, kl_weight=0.1):
+    def __init__(self, class_weights=None, samples_per_class=None, beta=0.9999, gamma=2.0, 
+                 label_smoothing=0.1, kl_weight=0.1, center_weight=0.005):
         super(CombinedLoss, self).__init__()
-        self.alpha = alpha
         self.gamma = gamma  # Higher gamma means more focus on hard examples
         self.label_smoothing = label_smoothing
         self.kl_weight = kl_weight
+        self.center_weight = center_weight
+        self.device = None
         
-        # Setup class weights for handling class imbalance
+        # Initialize focal loss with class weights
         if class_weights is not None:
-            self.class_weights = torch.FloatTensor(class_weights).to(self.get_device())
+            self.class_weights = torch.FloatTensor(class_weights)
         else:
             self.class_weights = None
-    
+            
+        # Initialize class-balanced loss if sample counts provided
+        if samples_per_class is not None:
+            self.cb_loss = ClassBalancedLoss(samples_per_class, beta=beta, gamma=gamma)
+        else:
+            self.cb_loss = None
+            
     def get_device(self):
-        # Helper to get current device
-        if hasattr(self, 'weight') and self.weight is not None:
-            return self.weight.device
+        if self.device is not None:
+            return self.device
         return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
-    def forward(self, inputs, targets):
+    def forward(self, inputs, targets, features=None, centers=None):
+        """
+        Arguments:
+            inputs: Model predictions (logits)
+            targets: Ground truth labels
+            features: Optional feature embeddings for center loss
+            centers: Optional class centers for center loss
+        """
+        if self.device is None:
+            self.device = inputs.device
+            if self.class_weights is not None:
+                self.class_weights = self.class_weights.to(self.device)
+                
+        from config import NUM_CLASSES
+        
         # If targets are one-hot encoded (for mixup/cutmix), use KL divergence
         if len(targets.shape) > 1 and targets.shape[1] > 1:
-            ce_loss = -torch.sum(F.log_softmax(inputs, dim=1) * targets, dim=1)
+            # KL divergence loss for soft targets
+            log_probs = F.log_softmax(inputs, dim=1)
+            kl_loss = -torch.sum(targets * log_probs, dim=1)
+            
+            # Apply class weights if provided
             if self.class_weights is not None:
-                # Weight each sample based on the dominant class
-                _, dominant_class = targets.max(1)
-                weights = self.class_weights[dominant_class]
-                ce_loss = ce_loss * weights
+                # Weight each sample based on class distribution in targets
+                class_weights = self.class_weights.unsqueeze(0).expand(targets.size(0), -1)
+                weight_per_sample = (targets * class_weights).sum(dim=1)
+                kl_loss = kl_loss * weight_per_sample
+                
+            # If class-balanced loss is available, combine with it
+            if self.cb_loss is not None:
+                cb_loss_val = self.cb_loss(inputs, targets)
+                return (kl_loss.mean() + cb_loss_val) / 2
             
-            # Apply focal weighting to focus on hard examples
-            probs = torch.sum(F.softmax(inputs, dim=1) * targets, dim=1)
-            focal_weight = (1 - probs) ** self.gamma
-            focal_loss = focal_weight * ce_loss
+            return kl_loss.mean()
             
-            return focal_loss.mean()
-        
         # For standard classification with integer labels
         else:
-            # CrossEntropy with label smoothing
+            # Generate smoothed one-hot targets
             smoothed_targets = torch.zeros_like(inputs).scatter_(
                 1, targets.unsqueeze(1), 1.0
             )
             smoothed_targets = smoothed_targets * (1.0 - self.label_smoothing) + \
-                              self.label_smoothing / inputs.shape[1]
+                             self.label_smoothing / NUM_CLASSES
             
+            # Cross-entropy loss with label smoothing
             log_probs = F.log_softmax(inputs, dim=1)
-            ce_loss = -torch.sum(log_probs * smoothed_targets, dim=1)
+            loss = -torch.sum(log_probs * smoothed_targets, dim=1)
             
-            if self.class_weights is not None:
-                # Apply class weights
-                weights = self.class_weights[targets]
-                ce_loss = ce_loss * weights
-            
-            # Apply focal weighting for hard examples
-            probs = torch.gather(F.softmax(inputs, dim=1), 1, targets.unsqueeze(1)).squeeze(1)
+            # Apply focal weighting
+            probs = torch.gather(F.softmax(inputs, dim=1), 1, targets.unsqueeze(1)).squeeze()
             focal_weight = (1 - probs) ** self.gamma
-            focal_loss = focal_weight * ce_loss
             
-            return focal_loss.mean()
+            # Apply class weights if provided
+            if self.class_weights is not None:
+                weights = self.class_weights[targets]
+                loss = loss * weights * focal_weight
+            else:
+                loss = loss * focal_weight
+                
+            # Add center loss component if features and centers provided
+            center_loss = 0
+            if features is not None and centers is not None:
+                batch_size = features.size(0)
+                features = features.view(batch_size, -1)
+                target_centers = centers[targets]
+                center_loss = self.center_weight * torch.mean(
+                    torch.sum((features - target_centers) ** 2, dim=1)
+                )
+                
+            # If class-balanced loss is available, combine with it
+            if self.cb_loss is not None:
+                cb_loss_val = self.cb_loss(inputs, targets)
+                return loss.mean() * 0.7 + cb_loss_val * 0.3 + center_loss
+                
+            return loss.mean() + center_loss
 
 
 class DistillationLoss(nn.Module):
-    """Knowledge Distillation Loss for model distillation.
+    """Enhanced Knowledge Distillation Loss for model distillation.
     
-    Enables learning from a teacher model's outputs.
+    Enables learning from a teacher model's outputs with improved
+    temperature scaling and attention transfer.
     
     Args:
         alpha: Balance between hard and soft targets (0-1)
         temperature: Temperature for softening probability distributions
+        attention_beta: Weight for attention transfer (0-1)
     """
-    def __init__(self, alpha=0.5, temperature=2.0):
+    def __init__(self, alpha=0.5, temperature=2.0, attention_beta=0.0):
         super(DistillationLoss, self).__init__()
         self.alpha = alpha
         self.temperature = temperature
+        self.attention_beta = attention_beta
         self.criterion_kl = nn.KLDivLoss(reduction='batchmean')
         
-    def forward(self, student_logits, teacher_logits, labels=None, criterion=None):
-        """Compute distillation loss between student and teacher outputs."""
+    def forward(self, student_logits, teacher_logits, labels=None, criterion=None, 
+                student_features=None, teacher_features=None):
+        """Compute distillation loss between student and teacher outputs.
+        
+        Args:
+            student_logits: Output logits from student model
+            teacher_logits: Output logits from teacher model
+            labels: Optional ground truth labels for hard loss
+            criterion: Optional criterion for hard loss
+            student_features: Optional features from student for attention transfer
+            teacher_features: Optional features from teacher for attention transfer
+        """
         # Calculate soft target loss (KL divergence)
+        # Apply temperature scaling to soften probability distributions
         soft_log_probs = F.log_softmax(student_logits / self.temperature, dim=1)
         soft_targets = F.softmax(teacher_logits / self.temperature, dim=1)
         soft_targets = soft_targets.detach()  # No gradient through teacher
         
+        # Scale KL divergence by temperature squared for proper gradient scaling
         distill_loss = self.criterion_kl(soft_log_probs, soft_targets) * (self.temperature ** 2)
+        
+        # Add attention transfer component if features are provided
+        attention_loss = 0.0
+        if self.attention_beta > 0 and student_features is not None and teacher_features is not None:
+            # Convert features to attention maps
+            student_attention = self._get_attention(student_features)
+            teacher_attention = self._get_attention(teacher_features).detach()
+            
+            # Calculate attention transfer loss
+            attention_loss = self.attention_beta * self._attention_transfer_loss(
+                student_attention, teacher_attention)
         
         # Combine with hard target loss if provided
         if labels is not None and criterion is not None:
             hard_loss = criterion(student_logits, labels)
-            return self.alpha * hard_loss + (1.0 - self.alpha) * distill_loss
+            return self.alpha * hard_loss + (1.0 - self.alpha) * distill_loss + attention_loss
         else:
-            return distill_loss
+            return distill_loss + attention_loss
+    
+    def _get_attention(self, features):
+        """Convert feature maps to attention maps."""
+        if isinstance(features, list):
+            return [self._get_attention(f) for f in features]
+            
+        # For 4D features (B, C, H, W), convert to spatial attention
+        if len(features.shape) == 4:
+            # Sum across channels and normalize
+            return F.normalize(features.pow(2).mean(1).view(features.size(0), -1), dim=1)
+        return features
+    
+    def _attention_transfer_loss(self, student_attention, teacher_attention):
+        """Calculate attention transfer loss between student and teacher attention maps."""
+        if isinstance(student_attention, list):
+            return sum(self._attention_transfer_loss(s, t) 
+                      for s, t in zip(student_attention, teacher_attention))
+        
+        return F.mse_loss(student_attention, teacher_attention)
