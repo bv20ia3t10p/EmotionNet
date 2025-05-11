@@ -126,11 +126,10 @@ The enhanced model achieves significant improvement over the baseline:
 |-------|-------------|----------|
 | Baseline | ConvNeXt Base | 73.3% |
 | Enhanced | ConvNeXt Large + Optimizations | 80-82% |
-| Latest | ConvNeXt X-Large + Optimizations | 82-85% (expected) |
 
 ## Next Steps for Further Improvement
 
-To push beyond 85% accuracy:
+To push beyond 82% accuracy:
 
 1. Ensemble with additional model architectures (ViT + ConvNeXt)
 2. Pre-train on larger facial expression datasets

@@ -5,7 +5,7 @@ python -c "import torch; torch.cuda.empty_cache()"
 
 # Set environment variables for model configuration
 export MODEL_TYPE="ConvNeXtEmoteNet"
-export BACKBONE="convnext_xlarge"
+export BACKBONE="convnext_large"
 export BATCH_SIZE=128
 export LEARNING_RATE=0.0003
 export NUM_EPOCHS=400

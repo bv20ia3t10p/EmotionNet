@@ -203,7 +203,7 @@ class ConvNeXtEmoteNet(nn.Module):
         backbone: Base ConvNeXt model from timm
         pretrained: Whether to use pretrained weights
     """
-    def __init__(self, backbone="convnext_xlarge", pretrained=True):
+    def __init__(self, backbone="convnext_large", pretrained=True):
         super(ConvNeXtEmoteNet, self).__init__()
         from config import NUM_CLASSES, HEAD_DROPOUT, FEATURE_DROPOUT
         
@@ -229,8 +229,6 @@ class ConvNeXtEmoteNet(nn.Module):
             feature_dim = 768
         elif 'base' in backbone:
             feature_dim = 1024
-        elif 'xlarge' in backbone:
-            feature_dim = 2048
         else:  # large
             feature_dim = 1536
         
@@ -252,36 +250,34 @@ class ConvNeXtEmoteNet(nn.Module):
         )
         
         # Enhanced Feature Refinement with normalization and residual connections
-        output_dim = 1536  # Increased from 1024 to better handle X-Large features
         self.feature_refine = nn.Sequential(
-            nn.Conv2d(feature_dim, output_dim, kernel_size=1),
-            nn.BatchNorm2d(output_dim),
+            nn.Conv2d(feature_dim, 1024, kernel_size=1),
+            nn.BatchNorm2d(1024),
             nn.SiLU(inplace=True),
             nn.Dropout2d(FEATURE_DROPOUT)
         )
         
         # Multi-scale feature pyramid with dilated convolutions for larger receptive field
-        pyramid_dim = 768  # Increased from 512 to better handle X-Large features
         self.pyramid_layers = nn.ModuleList([
             nn.Sequential(
-                nn.Conv2d(feature_dim, pyramid_dim, kernel_size=3, padding=i+1, dilation=i+1),
-                nn.BatchNorm2d(pyramid_dim),
+                nn.Conv2d(feature_dim, 512, kernel_size=3, padding=i+1, dilation=i+1),
+                nn.BatchNorm2d(512),
                 nn.SiLU(inplace=True)
             ) for i in range(3)  # 3 parallel paths with different receptive fields
         ])
         
         # Bottleneck-based Pyramid fusion with improved efficiency
         self.pyramid_fusion = nn.Sequential(
-            nn.Conv2d(pyramid_dim * 3, pyramid_dim, kernel_size=1),  # Reduce channels first
-            nn.BatchNorm2d(pyramid_dim),
+            nn.Conv2d(512 * 3, 512, kernel_size=1),  # Reduce channels first
+            nn.BatchNorm2d(512),
             nn.SiLU(inplace=True),
-            nn.Conv2d(pyramid_dim, output_dim, kernel_size=1),     # Then expand to final dimension
-            nn.BatchNorm2d(output_dim),
+            nn.Conv2d(512, 1024, kernel_size=1),     # Then expand to final dimension
+            nn.BatchNorm2d(1024),
             nn.SiLU(inplace=True)
         )
         
         # Residual connection for feature refinement
-        self.feature_proj = nn.Conv2d(feature_dim, output_dim, kernel_size=1, bias=False) if feature_dim != output_dim else nn.Identity()
+        self.feature_proj = nn.Conv2d(feature_dim, 1024, kernel_size=1, bias=False) if feature_dim != 1024 else nn.Identity()
         
         # Enhanced global pooling with learnable weights
         self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
@@ -289,7 +285,7 @@ class ConvNeXtEmoteNet(nn.Module):
         self.pool_weights = nn.Parameter(torch.FloatTensor([0.5, 0.5]))
         
         # Advanced classifier with layer normalization
-        classifier_dim = output_dim * 2  # Doubled for concatenated pooling methods
+        classifier_dim = 1024 * 2  # Doubled for concatenated pooling methods
         self.classifier = nn.Sequential(
             nn.Linear(classifier_dim, 768),
             nn.LayerNorm(768),
@@ -394,12 +390,6 @@ class ConvNeXtEmoteNet(nn.Module):
             tuple: (logits, features) if return_features=True, else logits
         """
         batch_size = x.shape[0]
-        
-        # Determine output dimension based on backbone
-        if hasattr(self, 'feature_refine'):
-            output_dim = self.feature_refine[0].out_channels
-        else:
-            output_dim = 1536  # Default if not found
         
         # Optimize memory format if on CUDA
         if self.channels_last and torch.cuda.is_available():

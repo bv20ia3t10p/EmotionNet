@@ -18,7 +18,7 @@ export ROOT="./extracted"
 export DATASET_PATH="${ROOT}/emotion"
 export MODEL_PATH="${ROOT}/emotion_convnext_model.pth"
 export MODEL_TYPE="ConvNeXtEmoteNet"
-export BACKBONE="convnext_xlarge"
+export BACKBONE="convnext_large"
 export IMAGE_SIZE="224"
 # Default paths - using original dataset
 export TRAIN_PATH="${DATASET_PATH}/train"
