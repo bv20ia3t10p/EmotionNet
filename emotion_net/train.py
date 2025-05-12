@@ -5,7 +5,7 @@ import torch
 import argparse
 import numpy as np
 from emotion_net.training import EmotionTrainer
-from emotion_net.data.dataset import AdvancedEmotionDataset, load_data
+from emotion_net.data.dataset import AdvancedEmotionDataset, load_and_split_data
 from emotion_net.models.ensemble import EnsembleModel
 from emotion_net.config.constants import (
     DEFAULT_NUM_EPOCHS, DEFAULT_BATCH_SIZE, DEFAULT_LEARNING_RATE,
@@ -39,35 +39,27 @@ def parse_args():
                       help='Directory to save models')
     parser.add_argument('--val_split', type=float, default=0.1,
                       help='Validation split ratio (default: 0.1)')
+    parser.add_argument('--loss_type', type=str, default='cross_entropy',
+                      choices=['cross_entropy', 'focal'],
+                      help="Type of loss function to use (default: cross_entropy)")
+    parser.add_argument('--focal_gamma', type=float, default=2.0,
+                      help="Gamma parameter for Focal Loss (default: 2.0)")
+    parser.add_argument('--label_smoothing', type=float, default=0.1,
+                      help="Label smoothing factor for CrossEntropyLoss (default: 0.1)")
+    parser.add_argument('--mixup_alpha', type=float, default=0.0,
+                      help="Alpha parameter for Mixup (default: 0.0 to disable)")
+    parser.add_argument('--drop_path_rate', type=float, default=0.0,
+                      help="Drop path rate (Stochastic Depth) for backbones (default: 0.0)")
+    parser.add_argument('--scheduler_type', type=str, default='one_cycle',
+                      choices=['one_cycle', 'cosine_annealing', 'none'],
+                      help="Type of LR scheduler (default: one_cycle)")
+    parser.add_argument('--num_workers', type=int, default=4,
+                      help="Number of data loading workers (default: 4)")
     
     # Parse known args to handle both old and new formats
     args, unknown = parser.parse_known_args()
     
     return args
-
-def split_data(paths, labels, val_ratio=0.1, seed=42):
-    """Split data into train and validation sets."""
-    # Set random seed for reproducibility
-    np.random.seed(seed)
-    
-    # Get indices for splitting
-    indices = np.arange(len(paths))
-    np.random.shuffle(indices)
-    
-    # Calculate split point
-    split = int(len(indices) * (1 - val_ratio))
-    
-    # Split indices
-    train_indices = indices[:split]
-    val_indices = indices[split:]
-    
-    # Split data
-    train_paths = [paths[i] for i in train_indices]
-    train_labels = [labels[i] for i in train_indices]
-    val_paths = [paths[i] for i in val_indices]
-    val_labels = [labels[i] for i in val_indices]
-    
-    return train_paths, train_labels, val_paths, val_labels
 
 def main():
     """Main training function."""
@@ -84,48 +76,48 @@ def main():
         
         # Load data
         print("\nLoading data...")
-        if args.test_dir:
-            # If test directory is provided, use it for validation
-            train_paths, train_labels = load_data(args.data_dir, EMOTIONS)
-            val_paths, val_labels = load_data(args.test_dir, EMOTIONS)
-        else:
-            # Otherwise, split training data
-            all_paths, all_labels = load_data(args.data_dir, EMOTIONS)
-            train_paths, train_labels, val_paths, val_labels = split_data(
-                all_paths, all_labels, args.val_split
-            )
+        # Call load_and_split_data with correct arguments
+        train_dataset, val_dataset, test_dataset, train_labels = load_and_split_data(
+            args.data_dir, 
+            EMOTIONS, 
+            test_dir=args.test_dir, # Pass test_dir explicitly
+            image_size=args.image_size # Pass image_size explicitly
+            # val_split is handled inside load_and_split_data
+        )
         
         # Print dataset sizes
         print(f"\nDataset sizes:")
-        print(f"Training samples: {len(train_paths)}")
-        print(f"Validation samples: {len(val_paths)}")
-        
-        # Create datasets
-        train_dataset = AdvancedEmotionDataset(
-            train_paths, train_labels,
-            mode='train',
-            image_size=args.image_size
-        )
-        val_dataset = AdvancedEmotionDataset(
-            val_paths, val_labels,
-            mode='val',
-            image_size=args.image_size
-        )
+        print(f"Training samples: {len(train_dataset)}")
+        print(f"Validation samples: {len(val_dataset)}")
         
         # Create model
         print(f"\nCreating EnsembleModel with backbones: {args.backbones}")
+        config = {
+            'drop_path_rate': args.drop_path_rate
+        }
         model = EnsembleModel(
             num_classes=len(EMOTIONS),
             backbones=args.backbones,
+            drop_path_rate=config.get('drop_path_rate', 0.0)
         ).to(device)
         
         # Training configuration
-        config = {
-            'num_epochs': args.num_epochs,
+        trainer_config = {
             'batch_size': args.batch_size,
+            'num_epochs': args.num_epochs,
             'learning_rate': args.learning_rate,
             'patience': args.patience,
-            'image_size': args.image_size
+            'model_dir': args.model_dir,
+            'use_ema': True, 
+            'ema_decay': 0.999,
+            'num_workers': args.num_workers,
+            'loss_type': args.loss_type,
+            'focal_gamma': args.focal_gamma,
+            'label_smoothing': args.label_smoothing,
+            'mixup_alpha': args.mixup_alpha,
+            'drop_path_rate': args.drop_path_rate,
+            'scheduler_type': args.scheduler_type,
+            'train_labels': train_labels
         }
         
         # Create trainer
@@ -134,7 +126,7 @@ def main():
             train_dataset=train_dataset,
             val_dataset=val_dataset,
             device=device,
-            config=config
+            config=trainer_config
         )
         
         # Start training
@@ -146,12 +138,6 @@ def main():
         # Test on test set if provided
         if args.test_dir:
             print("\nEvaluating on test set...")
-            test_paths, test_labels = load_data(args.test_dir, EMOTIONS)
-            test_dataset = AdvancedEmotionDataset(
-                test_paths, test_labels,
-                mode='test',
-                image_size=args.image_size
-            )
             test_metrics = trainer.evaluate(test_dataset)
             print(f"Test F1 Score: {test_metrics['f1']:.4f}")
         

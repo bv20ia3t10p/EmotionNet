@@ -9,6 +9,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix
 from torch.utils.data import DataLoader
+from torch.cuda.amp import GradScaler
+from torch.utils.data.sampler import WeightedRandomSampler
 
 from emotion_net.training.metrics import (
     calculate_metrics, save_training_history, plot_training_history
@@ -96,20 +98,49 @@ def calculate_metrics(y_true, y_pred, labels, save_dir=None, prefix=''):
 class EmotionTrainer:
     """Trainer class for emotion recognition model."""
     
-    def __init__(self, model, train_dataset, val_dataset, device, config):
+    def __init__(self, model, train_dataset, val_dataset, config, device, test_dataset=None):
         """Initialize trainer with model and datasets."""
-        self.model = model
+        self.model = model.to(device)
+        self.train_labels = config.get('train_labels', [])
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
-        self.device = device
+        self.test_dataset = test_dataset
         self.config = config
-        
-        # Create data loaders with appropriate batch sizes
+        self.device = device
+        self.history = {'train_loss': [], 'train_f1': [], 'val_loss': [], 'val_f1': []}
+
+        # Calculate class weights and counts for sampler
+        if self.train_labels:
+            print("Setting up WeightedRandomSampler...")
+            # Get class counts using the function (we need counts here, not weights)
+            _, class_counts = calculate_class_weights(self.train_labels, len(train_dataset.classes))
+            # Calculate weights for each sample: 1 / count of sample's class
+            # Avoid division by zero if a class has 0 samples (though unlikely in train set)
+            class_weights_inv = [1.0 / count if count > 0 else 0 for count in class_counts]
+            sample_weights = [class_weights_inv[label] for label in self.train_labels]
+            
+            # Create sampler
+            self.train_sampler = WeightedRandomSampler(
+                weights=sample_weights, 
+                num_samples=len(sample_weights), 
+                replacement=True
+            )
+            print(f"Sampler created for {len(sample_weights)} samples.")
+            # Shuffle must be False when using a sampler
+            shuffle_train = False 
+        else:
+            print("WARNING: No train_labels provided for WeightedRandomSampler. Using standard shuffling.")
+            self.train_sampler = None
+            shuffle_train = True
+
+        # Create data loaders
         self.train_loader = DataLoader(
-            train_dataset,
-            batch_size=config.get('batch_size', DEFAULT_BATCH_SIZE),
-            shuffle=True,
-            num_workers=4,
+            train_dataset, 
+            batch_size=config.get('batch_size', DEFAULT_BATCH_SIZE), 
+            # Use sampler if created, otherwise shuffle based on flag
+            sampler=self.train_sampler, 
+            shuffle=shuffle_train, # Must be False if sampler is not None
+            num_workers=config.get('num_workers', 4), 
             pin_memory=True
         )
         
@@ -123,11 +154,17 @@ class EmotionTrainer:
         
         # Setup training components
         self.model, self.criterion, self.optimizer, self.scheduler = setup_training(
-            model=model,
-            train_labels=[label for _, label in train_dataset],
+            model=self.model,
+            train_labels=self.train_labels,
             num_classes=len(train_dataset.classes),
             device=device,
-            learning_rate=config.get('learning_rate', 1e-4)
+            learning_rate=config.get('learning_rate', 1e-4),
+            num_epochs=config.get('num_epochs', DEFAULT_NUM_EPOCHS),
+            steps_per_epoch=len(self.train_loader),
+            label_smoothing_factor=config.get('label_smoothing', 0.1),
+            loss_type=config.get('loss_type', 'cross_entropy'),
+            focal_loss_gamma=config.get('focal_gamma', 2.0),
+            scheduler_type=config.get('scheduler_type', 'one_cycle')
         )
         
         # Initialize EMA if enabled
@@ -141,10 +178,6 @@ class EmotionTrainer:
         self.best_epoch = 0
         self.patience = config.get('patience', 15)
         self.patience_counter = 0
-        self.history = {
-            'train_loss': [], 'train_f1': [],
-            'val_loss': [], 'val_f1': []
-        }
         
         # Create checkpoint directory
         os.makedirs(CHECKPOINT_DIR, exist_ok=True)
@@ -185,7 +218,8 @@ class EmotionTrainer:
             train_metrics = train_epoch(
                 self.model, self.train_loader, self.criterion,
                 self.optimizer, self.device, self.scheduler,
-                ema=self.ema
+                ema=self.ema,
+                mixup_alpha=self.config.get('mixup_alpha', 0.0)
             )
             
             # Validation phase
@@ -200,10 +234,10 @@ class EmotionTrainer:
             if self.ema:
                 self.ema.restore()
             
-            # Update learning rate
-            if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                self.scheduler.step(val_metrics['f1'])
-            
+            # Update learning rate scheduler (if not OneCycleLR, which is stepped per batch)
+            if self.scheduler and self.config.get('scheduler_type', 'one_cycle') == 'cosine_annealing':
+                self.scheduler.step()
+
             # Store metrics
             self.history['train_loss'].append(train_metrics['loss'])
             self.history['train_f1'].append(train_metrics['f1'])

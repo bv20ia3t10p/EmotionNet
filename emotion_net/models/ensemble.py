@@ -3,11 +3,12 @@
 import torch
 import torch.nn as nn
 import timm
+from .model_parts import SimpleChannelAttention
 
 class EnsembleModel(nn.Module):
     """Ensemble of multiple backbone models with attention fusion."""
     
-    def __init__(self, num_classes=7, backbones=None):
+    def __init__(self, num_classes=7, backbones=None, drop_path_rate=0.1):
         super(EnsembleModel, self).__init__()
         if backbones is None:
             backbones = ['efficientnet_b0', 'resnet18']
@@ -20,17 +21,29 @@ class EnsembleModel(nn.Module):
         # Create backbones
         for backbone_name in backbones:
             if 'efficientnet' in backbone_name:
-                model = timm.create_model(backbone_name, pretrained=True)
+                model = timm.create_model(
+                    backbone_name, 
+                    pretrained=True, 
+                    drop_path_rate=drop_path_rate
+                )
                 out_dim = model.classifier.in_features
                 model.classifier = nn.Identity()
                 
             elif 'resnet' in backbone_name:
-                model = timm.create_model(backbone_name, pretrained=True)
+                model = timm.create_model(
+                    backbone_name, 
+                    pretrained=True, 
+                    drop_path_rate=drop_path_rate
+                )
                 out_dim = model.fc.in_features
                 model.fc = nn.Identity()
                 
             elif 'vit' in backbone_name:
-                model = timm.create_model(backbone_name, pretrained=True)
+                model = timm.create_model(
+                    backbone_name, 
+                    pretrained=True, 
+                    drop_path_rate=drop_path_rate
+                )
                 out_dim = model.head.in_features
                 model.head = nn.Identity()
                 
@@ -45,7 +58,8 @@ class EnsembleModel(nn.Module):
                 nn.Linear(out_dim, 512),
                 nn.BatchNorm1d(512),
                 nn.GELU(),
-                nn.Dropout(0.3)
+                SimpleChannelAttention(512),
+                nn.Dropout(0.5)
             )
             self.neck.append(neck)
         
@@ -60,7 +74,7 @@ class EnsembleModel(nn.Module):
             nn.Linear(512, 256),
             nn.BatchNorm1d(256),
             nn.GELU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.4),
             nn.Linear(256, num_classes)
         )
     

@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import Dataset
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+import pandas as pd
 
 from emotion_net.config.constants import IMAGE_MEAN, IMAGE_STD, EMOTIONS
 
@@ -136,3 +137,61 @@ class AdvancedEmotionDataset(Dataset):
             img = transformed["image"]
         
         return img, label 
+
+def split_data(paths, labels, val_ratio=0.1, seed=42):
+    """Split data into train and validation sets."""
+    # Set random seed for reproducibility
+    np.random.seed(seed)
+    
+    # Get indices for splitting
+    indices = np.arange(len(paths))
+    np.random.shuffle(indices)
+    
+    # Calculate split point
+    split = int(len(indices) * (1 - val_ratio))
+    
+    # Split indices
+    train_indices = indices[:split]
+    val_indices = indices[split:]
+    
+    # Split data
+    # Use pandas DataFrames for easier handling later
+    train_df = pd.DataFrame({'path': [paths[i] for i in train_indices], 'emotion': [labels[i] for i in train_indices]})
+    val_df = pd.DataFrame({'path': [paths[i] for i in val_indices], 'emotion': [labels[i] for i in val_indices]})
+    
+    return train_df, val_df # Return DataFrames
+
+def load_and_split_data(data_dir, emotions, test_dir=None, image_size=224):
+    """Load image paths and labels from directory structure and split into training and validation sets."""
+    paths, labels = load_data(data_dir, emotions)
+    
+    # Split the data into training and validation sets
+    train_df, val_df = split_data(paths, labels)
+    
+    print(f"Train samples: {len(train_df)}, Validation samples: {len(val_df)}")
+
+    # Extract paths and labels from DataFrames
+    train_paths = train_df['path'].tolist()
+    train_labels_list = train_df['emotion'].tolist()
+    val_paths = val_df['path'].tolist()
+    val_labels_list = val_df['emotion'].tolist()
+
+    # Instantiate datasets correctly
+    train_dataset = AdvancedEmotionDataset(train_paths, train_labels_list, mode='train', image_size=image_size)
+    val_dataset = AdvancedEmotionDataset(val_paths, val_labels_list, mode='val', image_size=image_size)
+    
+    # Extract train labels for sampler (already done from df)
+    # train_labels = train_df['emotion'].tolist() # Keep this variable name for consistency below
+
+    # Load test data if test_dir is provided
+    if test_dir:
+        # Use the existing load_data function for test data
+        test_paths, test_labels_list = load_data(test_dir, EMOTIONS) 
+        # Instantiate test dataset correctly
+        test_dataset = AdvancedEmotionDataset(test_paths, test_labels_list, mode='test', image_size=image_size)
+        print(f"Test samples: {len(test_dataset)}")
+        # Return train_labels_list used for sampler (originally named train_labels)
+        return train_dataset, val_dataset, test_dataset, train_labels_list 
+    else:
+        # Return train_labels_list used for sampler (originally named train_labels)
+        return train_dataset, val_dataset, None, train_labels_list 
