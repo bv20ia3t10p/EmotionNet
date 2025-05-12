@@ -23,6 +23,10 @@ def parse_fer2013(data_dir):
     paths = []
     labels = []
     print(f"Parsing FER2013 data from: {data_dir}")
+    
+    # Ensure data_dir is an absolute path
+    data_dir = os.path.abspath(data_dir)
+    
     # Use the global FER2013 EMOTIONS map {0: 'angry', ...}
     for emotion_idx, emotion_name in EMOTIONS.items():
         emotion_dir = os.path.join(data_dir, emotion_name)
@@ -33,6 +37,15 @@ def parse_fer2013(data_dir):
         for img_file in os.listdir(emotion_dir):
             if img_file.lower().endswith(('.jpg', '.jpeg', '.png')):
                 img_path = os.path.join(emotion_dir, img_file)
+                
+                # Ensure path is absolute
+                img_path = os.path.abspath(img_path)
+                
+                # Verify file exists
+                if not os.path.exists(img_path):
+                    print(f"Warning: Image file not found: {img_path}")
+                    continue
+                    
                 paths.append(img_path)
                 labels.append(emotion_idx) # Use index 0-6
                 count += 1

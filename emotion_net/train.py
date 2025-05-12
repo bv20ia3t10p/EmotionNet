@@ -71,6 +71,11 @@ def main():
     # Parse arguments
     args = parse_args()
     
+    # Set logging level for PIL to show more info
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger('PIL').setLevel(logging.INFO)
+    
     # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\nUsing device: {device}")
@@ -113,50 +118,65 @@ def main():
         # Print dataset sizes
         print(f"\nDataset sizes:")
         print(f"Training samples: {len(train_dataset)}")
-        print(f"Validation samples: {len(val_dataset)}")
+        print(f"Validation samples: {len(val_dataset) if val_dataset else 0}")
         
-        # Create model
-        print(f"\nCreating EnsembleModel with backbones: {args.backbones}")
+        # Update data paths if temp directory was created
+        if hasattr(data_manager, 'temp_dir') and data_manager.temp_dir:
+            print(f"\nUpdating data paths to use temporary directory: {data_manager.temp_dir}")
+            # If using FER2013 with CSV data, update the paths
+            if args.dataset_name == 'fer2013' and args.test_dir is None:
+                args.test_dir = os.path.join(data_manager.temp_dir, 'test')
+                print(f"Updated test_dir to: {args.test_dir}")
+                # Do not update args.data_dir as it's still needed for reference
+        
+        # Create training configuration
         config = {
-            'drop_path_rate': args.drop_path_rate
+            'num_epochs': args.num_epochs,
+            'batch_size': args.batch_size,
+            'learning_rate': args.learning_rate,
+            'train_labels': train_labels,
+            'patience': args.patience,
+            'label_smoothing': getattr(args, 'label_smoothing', 0.1),
+            'loss_type': getattr(args, 'loss_type', 'cross_entropy'),
+            'focal_gamma': getattr(args, 'focal_gamma', 2.0),
+            'scheduler_type': getattr(args, 'scheduler_type', 'one_cycle'),
+            'dataset_name': args.dataset_name,
+            'use_ema': getattr(args, 'use_ema', True),
+            'model_dir': args.model_dir,
+            'num_classes': num_classes,
+            'num_workers': getattr(args, 'num_workers', 4),
+            'mixup_alpha': getattr(args, 'mixup_alpha', 0.0),
+            'ema_decay': getattr(args, 'ema_decay', 0.999),
+            'drop_path_rate': getattr(args, 'drop_path_rate', 0.0)
         }
+        
+        # Initialize model
         model = EnsembleModel(
-            num_classes=num_classes,
             backbones=args.backbones,
-            drop_path_rate=config.get('drop_path_rate', 0.0),
-            pretrained=True  # Use pretrained weights for better initialization
+            num_classes=num_classes,
+            pretrained=True,
+            drop_path_rate=getattr(args, 'drop_path_rate', 0.0)
         ).to(device)
         
-        # Set model to fixed averaging mode for initial training
-        model.use_fixed_averaging = True
+        # Print info to logs
+        print("\nCreating trainer...")
+        print(f"Model architecture: EnsembleModel with {args.backbones}")
+        print(f"Number of epochs: {args.num_epochs}")
+        print(f"Batch size: {args.batch_size}")
+        print(f"Learning rate: {args.learning_rate}")
+        print(f"Patience for early stopping: {args.patience}")
+        print(f"Dataset: {args.dataset_name}")
+        print(f"Model directory: {args.model_dir}")
         
-        # Training configuration
-        trainer_config = {
-            'batch_size': args.batch_size,
-            'num_epochs': args.num_epochs,
-            'learning_rate': args.learning_rate,
-            'patience': args.patience,
-            'model_dir': args.model_dir,
-            'use_ema': True, 
-            'ema_decay': 0.999,
-            'num_workers': args.num_workers,
-            'loss_type': args.loss_type,
-            'focal_gamma': args.focal_gamma,
-            'label_smoothing': args.label_smoothing,
-            'mixup_alpha': args.mixup_alpha,
-            'drop_path_rate': args.drop_path_rate,
-            'scheduler_type': args.scheduler_type,
-            'train_labels': train_labels,
-            'dataset_name': args.dataset_name
-        }
-        
-        # Create trainer
+        # Create trainer and run training
         trainer = EmotionTrainer(
             model=model,
             train_dataset=train_dataset,
             val_dataset=val_dataset,
+            test_dataset=test_dataset,
+            config=config,
             device=device,
-            config=trainer_config
+            data_manager=data_manager  # Pass data_manager to the trainer
         )
         
         # Start training
@@ -170,6 +190,11 @@ def main():
             print("\nEvaluating on test set...")
             test_metrics = trainer.evaluate(test_dataset)
             print(f"Test F1 Score: {test_metrics['f1']:.4f}")
+        
+        # Clean up temporary directories if using a FER2013DataManager
+        if args.dataset_name == 'fer2013' and hasattr(data_manager, 'cleanup_temp_dir'):
+            print("\nCleaning up temporary directories...")
+            data_manager.cleanup_temp_dir()
         
         return 0
         

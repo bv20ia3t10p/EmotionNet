@@ -59,41 +59,27 @@ class BaseEmotionDataset(Dataset):
         img_path = self.image_paths[idx]
         label = self.labels[idx]
 
+        # Check if path exists
+        if not os.path.exists(img_path):
+            print(f"Error: Image path does not exist: {img_path}")
+            # Create a placeholder tensor
+            img = torch.zeros((3, self.image_size, self.image_size), dtype=torch.float32)
+            return img, torch.tensor(label, dtype=torch.long)
+
         try:
-            # Use OpenCV first
-            img = cv2.imread(img_path)
-            if img is None: raise cv2.error("cv2.imread failed") # More specific error
-            # Ensure 3 channels (convert grayscale to RGB)
-            if len(img.shape) == 2:
-                img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-            elif img.shape[2] == 1:
-                 img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-            elif img.shape[2] == 4: # Handle RGBA
-                 img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
-            else: # Assume BGR
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-        except Exception as e_cv2:
-            # Fallback to PIL if OpenCV fails
-            try:
-                pil_img = Image.open(img_path).convert('RGB')
-                img = np.array(pil_img)
-            except Exception as e_pil:
-                print(f"Error loading image {img_path} with both OpenCV and PIL: {e_cv2}, {e_pil}")
-                # Return a placeholder tensor
-                img = torch.zeros((3, self.image_size, self.image_size), dtype=torch.float32)
-                # Ensure label is returned even if image loading fails
-                return img, torch.tensor(label, dtype=torch.long)
-
-        # Apply transformations
-        if self.transform:
-            try:
+            # Try PIL first - most robust and reliable
+            pil_img = Image.open(img_path).convert('RGB')
+            img = np.array(pil_img)
+            
+            # Apply transformations
+            if self.transform:
                 transformed = self.transform(image=img)
                 img = transformed["image"]
-            except Exception as e_transform:
-                 print(f"Error applying transform to image {img_path}: {e_transform}")
-                 # Return a placeholder tensor
-                 img = torch.zeros((3, self.image_size, self.image_size), dtype=torch.float32)
-                 return img, torch.tensor(label, dtype=torch.long)
 
-        return img, torch.tensor(label, dtype=torch.long) # Ensure label is tensor
+            return img, torch.tensor(label, dtype=torch.long)
+            
+        except Exception as e:
+            print(f"Error loading image {img_path}: {e}")
+            # Return a placeholder tensor
+            img = torch.zeros((3, self.image_size, self.image_size), dtype=torch.float32)
+            return img, torch.tensor(label, dtype=torch.long)

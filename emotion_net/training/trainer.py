@@ -98,7 +98,7 @@ def calculate_metrics(y_true, y_pred, labels, save_dir=None, prefix=''):
 class EmotionTrainer:
     """Trainer class for emotion recognition model."""
     
-    def __init__(self, model, train_dataset, val_dataset, config, device, test_dataset=None):
+    def __init__(self, model, train_dataset, val_dataset, config, device, test_dataset=None, data_manager=None):
         """Initialize trainer with model and datasets."""
         self.model = model.to(device)
         self.train_labels = config.get('train_labels', [])
@@ -107,6 +107,15 @@ class EmotionTrainer:
         self.test_dataset = test_dataset
         self.config = config
         self.device = device
+        self.data_manager = data_manager  # Store reference to data manager
+        
+        # Store data paths from the data manager if available
+        self.temp_dir = getattr(data_manager, 'temp_dir', None)
+        if self.temp_dir:
+            print(f"EmotionTrainer using temp directory: {self.temp_dir}")
+            if hasattr(data_manager, 'data_dir'):
+                print(f"Data manager's data_dir: {data_manager.data_dir}")
+        
         self.history = {'train_loss': [], 'train_f1': [], 'val_loss': [], 'val_f1': []}
 
         # Calculate class weights and counts for sampler
@@ -214,6 +223,16 @@ class EmotionTrainer:
         print(f"Validating on {len(self.val_dataset)} samples")
         print(f"Using device: {self.device}")
         print(f"Number of classes: {len(self.train_dataset.classes)}")
+        
+        # Verify first few training paths exist
+        if hasattr(self.train_dataset, 'image_paths'):
+            print("Verifying first 5 training image paths...")
+            for i in range(min(5, len(self.train_dataset.image_paths))):
+                path = self.train_dataset.image_paths[i]
+                if os.path.exists(path):
+                    print(f"  Path exists: {path}")
+                else:
+                    print(f"  Path does not exist: {path}")
         
         for epoch in range(num_epochs):
             print(f"\nEpoch {epoch + 1}/{num_epochs}")
