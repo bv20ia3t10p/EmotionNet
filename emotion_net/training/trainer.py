@@ -164,7 +164,8 @@ class EmotionTrainer:
             label_smoothing_factor=config.get('label_smoothing', 0.1),
             loss_type=config.get('loss_type', 'cross_entropy'),
             focal_loss_gamma=config.get('focal_gamma', 2.0),
-            scheduler_type=config.get('scheduler_type', 'one_cycle')
+            scheduler_type=config.get('scheduler_type', 'one_cycle'),
+            dataset_name=config.get('dataset_name', None)
         )
         
         # Initialize EMA if enabled
@@ -179,8 +180,11 @@ class EmotionTrainer:
         self.patience = config.get('patience', 15)
         self.patience_counter = 0
         
+        # Get model directory from config or fall back to default
+        self.model_dir = config.get('model_dir', CHECKPOINT_DIR)
+        
         # Create checkpoint directory
-        os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+        os.makedirs(self.model_dir, exist_ok=True)
     
     def evaluate(self, dataset):
         """Evaluate model on a dataset."""
@@ -259,7 +263,7 @@ class EmotionTrainer:
                 if self.ema:
                     self.ema.apply_shadow()
                 
-                save_path = os.path.join(CHECKPOINT_DIR, 'best_model.pth')
+                save_path = os.path.join(self.model_dir, 'best_model.pth')
                 save_model(
                     self.model, self.optimizer, self.scheduler,
                     epoch, val_metrics, save_path
@@ -281,8 +285,8 @@ class EmotionTrainer:
                 break
         
         # Save training history
-        save_training_history(self.history, CHECKPOINT_DIR)
-        plot_training_history(self.history, CHECKPOINT_DIR)
+        save_training_history(self.history, self.model_dir)
+        plot_training_history(self.history, self.model_dir)
         
         print("\nTraining completed successfully!")
         return self.best_val_f1 

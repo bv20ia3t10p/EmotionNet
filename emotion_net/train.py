@@ -5,16 +5,21 @@ import torch
 import argparse
 import numpy as np
 from emotion_net.training import EmotionTrainer
-from emotion_net.data.dataset import AdvancedEmotionDataset, load_and_split_data
+from emotion_net.data import BaseEmotionDataset, FER2013DataManager, RAFDBDataManager
 from emotion_net.models.ensemble import EnsembleModel
 from emotion_net.config.constants import (
     DEFAULT_NUM_EPOCHS, DEFAULT_BATCH_SIZE, DEFAULT_LEARNING_RATE,
-    DEFAULT_BACKBONES, EMOTIONS, CHECKPOINT_DIR, DEFAULT_IMAGE_SIZE
+    DEFAULT_BACKBONES, CHECKPOINT_DIR, DEFAULT_IMAGE_SIZE
 )
 
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Train EmotionNet model')
+    
+    # Add Dataset Name Argument
+    parser.add_argument('--dataset_name', type=str, required=True,
+                      choices=['fer2013', 'rafdb'],
+                      help='Name of the dataset to use (fer2013 or rafdb)')
     
     # Required arguments
     parser.add_argument('--data_dir', type=str, required=True,
@@ -37,8 +42,8 @@ def parse_args():
                       help='Path to test data directory (optional)')
     parser.add_argument('--model_dir', type=str, default=CHECKPOINT_DIR,
                       help='Directory to save models')
-    parser.add_argument('--val_split', type=float, default=0.1,
-                      help='Validation split ratio (default: 0.1)')
+    parser.add_argument('--val_split_ratio', type=float, default=0.1,
+                      help='Validation split ratio for FER2013 (default: 0.1)')
     parser.add_argument('--loss_type', type=str, default='cross_entropy',
                       choices=['cross_entropy', 'focal'],
                       help="Type of loss function to use (default: cross_entropy)")
@@ -74,16 +79,36 @@ def main():
         # Create model directory
         os.makedirs(args.model_dir, exist_ok=True)
         
-        # Load data
-        print("\nLoading data...")
-        # Call load_and_split_data with correct arguments
-        train_dataset, val_dataset, test_dataset, train_labels = load_and_split_data(
-            args.data_dir, 
-            EMOTIONS, 
-            test_dir=args.test_dir, # Pass test_dir explicitly
-            image_size=args.image_size # Pass image_size explicitly
-            # val_split is handled inside load_and_split_data
-        )
+        # --- Instantiate the appropriate Data Manager ---
+        if args.dataset_name == 'fer2013':
+            data_manager = FER2013DataManager(
+                data_dir=args.data_dir,
+                test_dir=args.test_dir,
+                image_size=args.image_size,
+                val_split_ratio=args.val_split_ratio
+            )
+        elif args.dataset_name == 'rafdb':
+            data_manager = RAFDBDataManager(
+                data_dir=args.data_dir,
+                image_size=args.image_size
+                # test_dir and val_split_ratio are not used by RAFDBDataManager
+            )
+        else:
+            # Should be caught by argparse choices, but good practice
+            raise ValueError(f"Invalid dataset_name: {args.dataset_name}") 
+            
+        # --- Load data using the manager ---
+        print(f"\nLoading data using {type(data_manager).__name__}...")
+        train_dataset, val_dataset, test_dataset, train_labels = data_manager.get_datasets()
+        
+        if not train_dataset:
+            print("CRITICAL: train_dataset is None. Exiting.")
+            return 1
+        
+        # Get number of classes dynamically
+        num_classes = len(train_dataset.classes)
+        print(f"Number of classes detected: {num_classes}")
+        print(f"Class names: {train_dataset.classes}")
         
         # Print dataset sizes
         print(f"\nDataset sizes:")
@@ -96,10 +121,14 @@ def main():
             'drop_path_rate': args.drop_path_rate
         }
         model = EnsembleModel(
-            num_classes=len(EMOTIONS),
+            num_classes=num_classes,
             backbones=args.backbones,
-            drop_path_rate=config.get('drop_path_rate', 0.0)
+            drop_path_rate=config.get('drop_path_rate', 0.0),
+            pretrained=True  # Use pretrained weights for better initialization
         ).to(device)
+        
+        # Set model to fixed averaging mode for initial training
+        model.use_fixed_averaging = True
         
         # Training configuration
         trainer_config = {
@@ -117,7 +146,8 @@ def main():
             'mixup_alpha': args.mixup_alpha,
             'drop_path_rate': args.drop_path_rate,
             'scheduler_type': args.scheduler_type,
-            'train_labels': train_labels
+            'train_labels': train_labels,
+            'dataset_name': args.dataset_name
         }
         
         # Create trainer
