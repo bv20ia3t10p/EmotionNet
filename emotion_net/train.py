@@ -6,10 +6,10 @@ import argparse
 import numpy as np
 from emotion_net.training import EmotionTrainer
 from emotion_net.data.dataset import AdvancedEmotionDataset, load_data
-from emotion_net.models.model import EmotionNet
+from emotion_net.models.ensemble import EnsembleModel
 from emotion_net.config.constants import (
     DEFAULT_NUM_EPOCHS, DEFAULT_BATCH_SIZE, DEFAULT_LEARNING_RATE,
-    DEFAULT_BACKBONE, EMOTIONS, CHECKPOINT_DIR, DEFAULT_IMAGE_SIZE
+    DEFAULT_BACKBONES, EMOTIONS, CHECKPOINT_DIR, DEFAULT_IMAGE_SIZE
 )
 
 def parse_args():
@@ -27,8 +27,8 @@ def parse_args():
                       help='Training batch size')
     parser.add_argument('--learning_rate', type=float, default=DEFAULT_LEARNING_RATE,
                       help='Learning rate')
-    parser.add_argument('--backbone', '--backbones', type=str, default=DEFAULT_BACKBONE,
-                      help='Backbone architecture (use first backbone if multiple provided)')
+    parser.add_argument('--backbones', type=str, nargs='+', default=DEFAULT_BACKBONES,
+                      help='List of backbone architectures for the ensemble model')
     parser.add_argument('--patience', type=int, default=15,
                       help='Early stopping patience')
     parser.add_argument('--image_size', type=int, default=DEFAULT_IMAGE_SIZE,
@@ -42,10 +42,6 @@ def parse_args():
     
     # Parse known args to handle both old and new formats
     args, unknown = parser.parse_known_args()
-    
-    # Handle multiple backbones (take first one)
-    if isinstance(args.backbone, str) and ' ' in args.backbone:
-        args.backbone = args.backbone.split()[0]
     
     return args
 
@@ -117,11 +113,10 @@ def main():
         )
         
         # Create model
-        print(f"\nCreating model with backbone: {args.backbone}")
-        model = EmotionNet(
+        print(f"\nCreating EnsembleModel with backbones: {args.backbones}")
+        model = EnsembleModel(
             num_classes=len(EMOTIONS),
-            backbone=args.backbone,
-            pretrained=True
+            backbones=args.backbones,
         ).to(device)
         
         # Training configuration

@@ -18,6 +18,7 @@ from emotion_net.training.model_manager import (
 )
 from emotion_net.training.training_loops import train_epoch, validate
 from emotion_net.config.constants import CHECKPOINT_DIR, DEFAULT_NUM_EPOCHS, DEFAULT_BATCH_SIZE
+from emotion_net.models.ema import EMA
 
 def calculate_metrics(y_true, y_pred, labels, save_dir=None, prefix=''):
     """Calculate metrics using confusion matrix for more reliable F1 scores."""
@@ -129,6 +130,12 @@ class EmotionTrainer:
             learning_rate=config.get('learning_rate', 1e-4)
         )
         
+        # Initialize EMA if enabled
+        if self.config.get('use_ema', True):
+            self.ema = EMA(self.model, decay=self.config.get('ema_decay', 0.999))
+        else:
+            self.ema = None
+
         # Training state
         self.best_val_f1 = 0.0
         self.best_epoch = 0
@@ -177,14 +184,21 @@ class EmotionTrainer:
             # Training phase
             train_metrics = train_epoch(
                 self.model, self.train_loader, self.criterion,
-                self.optimizer, self.device, self.scheduler
+                self.optimizer, self.device, self.scheduler,
+                ema=self.ema
             )
             
             # Validation phase
+            if self.ema:
+                self.ema.apply_shadow()
+            
             val_metrics = validate(
                 self.model, self.val_loader, self.criterion,
                 self.device, self.train_dataset.classes
             )
+
+            if self.ema:
+                self.ema.restore()
             
             # Update learning rate
             if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -207,12 +221,18 @@ class EmotionTrainer:
                 self.best_epoch = epoch
                 self.patience_counter = 0
                 
-                # Save checkpoint
+                # Save checkpoint (with EMA weights if enabled)
+                if self.ema:
+                    self.ema.apply_shadow()
+                
                 save_path = os.path.join(CHECKPOINT_DIR, 'best_model.pth')
                 save_model(
                     self.model, self.optimizer, self.scheduler,
                     epoch, val_metrics, save_path
                 )
+
+                if self.ema:
+                    self.ema.restore()
                 
                 print(f"\nNew best model saved! (Validation F1: {self.best_val_f1:.4f})")
             else:

@@ -44,34 +44,46 @@ class AdvancedEmotionDataset(Dataset):
             self.transform = A.Compose([
                 # Resize with padding to maintain aspect ratio
                 A.LongestMaxSize(max_size=image_size),
-                A.Resize(height=image_size, width=image_size),  # Simple resize instead of PadIfNeeded
+                A.PadIfNeeded(min_height=image_size, min_width=image_size, border_mode=cv2.BORDER_CONSTANT, value=0),
                 
                 # Very mild spatial transformations that preserve facial features
-                A.HorizontalFlip(p=0.3),  # Reduced probability
+                A.HorizontalFlip(p=0.5),
                 A.Affine(
-                    scale=(0.98, 1.02),  # Reduced scale range
-                    translate_percent=(-0.02, 0.02),  # Reduced translation
-                    rotate=(-5, 5),  # Reduced rotation
-                    p=0.3  # Reduced probability
+                    scale=(0.9, 1.1),
+                    translate_percent=(-0.05, 0.05),
+                    rotate=(-15, 15),
+                    p=0.5
                 ),
                 
                 # Color and lighting augmentations (more important for facial recognition)
                 A.OneOf([
                     A.RandomBrightnessContrast(
-                        brightness_limit=0.1,  # Reduced brightness variation
-                        contrast_limit=0.1,    # Reduced contrast variation
+                        brightness_limit=0.2,
+                        contrast_limit=0.2,
                         p=1.0
                     ),
                     A.CLAHE(
-                        clip_limit=1.5,  # Reduced clip limit
+                        clip_limit=2.0,
                         tile_grid_size=(8, 8),
                         p=1.0
                     ),
                     A.GaussianBlur(
-                        blur_limit=3,
+                        blur_limit=(3, 7),
                         p=1.0
                     ),
-                ], p=0.5),
+                ], p=0.7),
+                
+                # Add Cutout/RandomErasing for regularization
+                A.CoarseDropout(
+                    max_holes=8,
+                    max_height=int(image_size * 0.1),
+                    max_width=int(image_size * 0.1),
+                    min_holes=1,
+                    min_height=int(image_size * 0.05),
+                    min_width=int(image_size * 0.05),
+                    fill_value=0,
+                    p=0.5
+                ),
                 
                 # Normalize and convert to tensor
                 A.Normalize(mean=IMAGE_MEAN, std=IMAGE_STD),

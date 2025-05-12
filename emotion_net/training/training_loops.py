@@ -7,7 +7,7 @@ import numpy as np
 from emotion_net.training.metrics import calculate_metrics
 import os
 
-def train_epoch(model, train_loader, criterion, optimizer, device, scheduler=None):
+def train_epoch(model, train_loader, criterion, optimizer, device, scheduler=None, ema=None):
     """Train for one epoch."""
     model.train()
     total_loss = 0
@@ -21,13 +21,18 @@ def train_epoch(model, train_loader, criterion, optimizer, device, scheduler=Non
         
         # Forward pass with mixed precision
         with autocast():
-            outputs = model(images)
+            outputs, _ = model(images)
             loss = criterion(outputs, labels)
         
         # Backward pass
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
+        
+        # Update EMA if provided
+        if ema:
+            ema.update()
         
         # Update learning rate if scheduler is provided
         if scheduler is not None and not isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -64,19 +69,19 @@ def validate(model, val_loader, criterion, device, labels):
     # Validation loop with progress bar
     with torch.no_grad():
         pbar = tqdm(val_loader, desc='Validation')
-        for images, labels in pbar:
-            images, labels = images.to(device), labels.to(device)
+        for images, labels_batch in pbar:
+            images, labels_batch = images.to(device), labels_batch.to(device)
             
-            # Forward pass with mixed precision
+            # Forward pass (consider moving model call out of autocast if NaNs persist)
+            outputs, _ = model(images)
             with autocast():
-                outputs = model(images)
-                loss = criterion(outputs, labels)
+                loss = criterion(outputs, labels_batch)
             
             # Update metrics
             total_loss += loss.item()
             preds = torch.argmax(outputs, dim=1)
             all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
+            all_labels.extend(labels_batch.cpu().numpy())
             
             # Update progress bar
             pbar.set_postfix({'loss': f'{loss.item():.4f}'})
