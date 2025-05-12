@@ -1,6 +1,5 @@
-"""Model definitions for EmotionNet."""
+"""Model definitions for emotion recognition."""
 
-from .ensemble import EnsembleModel
-from .ema import EMA
+from .model import EmotionNet
 
-__all__ = ['EnsembleModel', 'EMA'] 
+__all__ = ['EmotionNet'] 

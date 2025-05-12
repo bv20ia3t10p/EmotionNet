@@ -4,6 +4,11 @@ import os
 import torch
 from tqdm import tqdm
 from torch.cuda.amp import autocast
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix
+from torch.utils.data import DataLoader
 
 from emotion_net.training.metrics import (
     calculate_metrics, save_training_history, plot_training_history
@@ -11,155 +16,219 @@ from emotion_net.training.metrics import (
 from emotion_net.training.model_manager import (
     setup_training, calculate_class_weights, create_criterion, save_model
 )
+from emotion_net.training.training_loops import train_epoch, validate
+from emotion_net.config.constants import CHECKPOINT_DIR, DEFAULT_NUM_EPOCHS, DEFAULT_BATCH_SIZE
 
-def train_epoch(model, train_loader, criterion, optimizer, device, scaler=None, ema_model=None):
-    """Train for one epoch."""
-    model.train()
-    running_loss = 0.0
-    all_preds = []
-    all_targets = []
+def calculate_metrics(y_true, y_pred, labels, save_dir=None, prefix=''):
+    """Calculate metrics using confusion matrix for more reliable F1 scores."""
+    # Create confusion matrix
+    cm = confusion_matrix(y_true, y_pred, labels=range(len(labels)))
     
-    progress_bar = tqdm(train_loader, desc="Training")
-    for i, (inputs, labels) in enumerate(progress_bar):
-        inputs, labels = inputs.to(device), labels.to(device)
+    # Calculate metrics from confusion matrix
+    metrics = {}
+    total_samples = cm.sum()
+    
+    # Calculate per-class metrics
+    for i, label in enumerate(labels):
+        tp = cm[i, i]
+        fp = cm[:, i].sum() - tp
+        fn = cm[i, :].sum() - tp
+        tn = total_samples - (tp + fp + fn)
         
-        # Zero the parameter gradients
-        optimizer.zero_grad()
+        # Calculate precision, recall, F1
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
         
-        # Forward pass with AMP if enabled
-        if scaler is not None:
-            with autocast():
-                outputs, _ = model(inputs)
-                loss = criterion(outputs, labels)
-            
-            # Backward and optimize with AMP
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            outputs, _ = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+        metrics[label] = {
+            'precision': precision,
+            'recall': recall,
+            'f1-score': f1,
+            'support': cm[i, :].sum()
+        }
+    
+    # Calculate macro and weighted averages
+    macro_precision = np.mean([m['precision'] for m in metrics.values()])
+    macro_recall = np.mean([m['recall'] for m in metrics.values()])
+    macro_f1 = np.mean([m['f1-score'] for m in metrics.values()])
+    
+    # Weighted averages
+    weights = np.array([m['support'] for m in metrics.values()])
+    weights = weights / weights.sum()
+    weighted_precision = np.sum([m['precision'] * w for m, w in zip(metrics.values(), weights)])
+    weighted_recall = np.sum([m['recall'] * w for m, w in zip(metrics.values(), weights)])
+    weighted_f1 = np.sum([m['f1-score'] * w for m, w in zip(metrics.values(), weights)])
+    
+    # Save confusion matrix plot if save_dir is provided
+    if save_dir:
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                   xticklabels=labels, yticklabels=labels)
+        plt.title(f'{prefix} Confusion Matrix')
+        plt.xlabel('Predicted')
+        plt.ylabel('True')
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f'{prefix}_confusion_matrix.png'))
+        plt.close()
         
-        # Update EMA if enabled
-        if ema_model is not None:
-            ema_model.update()
-        
-        # Statistics
-        running_loss += loss.item()
-        _, predicted = outputs.max(1)
-        all_preds.extend(predicted.cpu().numpy())
-        all_targets.extend(labels.cpu().numpy())
-        
-        # Update progress bar
-        avg_loss = running_loss / (i + 1)
-        progress_bar.set_postfix({'loss': f"{avg_loss:.4f}"})
+        # Save metrics to file
+        metrics_file = os.path.join(save_dir, f'{prefix}_metrics.txt')
+        with open(metrics_file, 'w') as f:
+            f.write(f"{prefix} Metrics:\n")
+            f.write(f"Macro F1 Score: {macro_f1:.4f}\n")
+            f.write(f"Weighted F1 Score: {weighted_f1:.4f}\n")
+            f.write("\nPer-class metrics:\n")
+            for label, m in metrics.items():
+                f.write(f"{label}:\n")
+                f.write(f"  Precision: {m['precision']:.4f}\n")
+                f.write(f"  Recall: {m['recall']:.4f}\n")
+                f.write(f"  F1-score: {m['f1-score']:.4f}\n")
+                f.write(f"  Support: {m['support']}\n")
     
-    return running_loss / len(train_loader), all_preds, all_targets
-
-def validate(model, val_loader, criterion, device):
-    """Validate the model."""
-    model.eval()
-    val_loss = 0.0
-    all_preds = []
-    all_targets = []
-    
-    with torch.no_grad():
-        for inputs, labels in tqdm(val_loader, desc="Validating"):
-            inputs, labels = inputs.to(device), labels.to(device)
-            
-            outputs, _ = model(inputs)
-            loss = criterion(outputs, labels)
-            
-            val_loss += loss.item()
-            _, predicted = outputs.max(1)
-            all_preds.extend(predicted.cpu().numpy())
-            all_targets.extend(labels.cpu().numpy())
-    
-    return val_loss / len(val_loader), all_preds, all_targets
-
-def train(model, train_loader, val_loader, epochs, patience, learning_rate, device, 
-          use_amp=True, use_ema=True, save_path="model.pth", class_weights_boost=1.5):
-    """Train the model with advanced techniques for high accuracy."""
-    # Setup training components
-    ema_model, scaler, optimizer, scheduler = setup_training(
-        model, learning_rate, device, use_amp, use_ema
-    )
-    
-    # Calculate class weights and create criterion
-    class_weights = calculate_class_weights(train_loader, class_weights_boost, device)
-    criterion = create_criterion(class_weights, device)
-    
-    # Create save directory
-    save_dir = os.path.dirname(save_path)
-    os.makedirs(save_dir, exist_ok=True)
-    
-    # Training loop
-    best_val_f1 = 0.0
-    best_epoch = 0
-    no_improve_count = 0
-    
-    # Initialize metrics history
-    history = {
-        'train_loss': [], 'train_acc': [], 'train_f1': [],
-        'val_loss': [], 'val_acc': [], 'val_f1': []
+    return {
+        'macro_f1': macro_f1,
+        'weighted_f1': weighted_f1,
+        'per_class': metrics,
+        'confusion_matrix': cm
     }
+
+class EmotionTrainer:
+    """Trainer class for emotion recognition model."""
     
-    for epoch in range(epochs):
-        print(f"\nEpoch {epoch+1}/{epochs}")
+    def __init__(self, model, train_dataset, val_dataset, device, config):
+        """Initialize trainer with model and datasets."""
+        self.model = model
+        self.train_dataset = train_dataset
+        self.val_dataset = val_dataset
+        self.device = device
+        self.config = config
         
-        # Training phase
-        train_loss, train_preds, train_targets = train_epoch(
-            model, train_loader, criterion, optimizer, device, scaler, ema_model
+        # Create data loaders with appropriate batch sizes
+        self.train_loader = DataLoader(
+            train_dataset,
+            batch_size=config.get('batch_size', DEFAULT_BATCH_SIZE),
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True
         )
         
-        # Calculate training metrics
-        train_cm, train_report, train_macro_f1, train_weighted_f1 = calculate_metrics(
-            train_preds, train_targets, phase="train", save_dir=save_dir
+        self.val_loader = DataLoader(
+            val_dataset,
+            batch_size=config.get('batch_size', DEFAULT_BATCH_SIZE) * 2,  # Larger batch size for validation
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True
         )
         
-        # Validation phase
-        if use_ema:
-            ema_model.apply_shadow()
-        
-        val_loss, val_preds, val_targets = validate(model, val_loader, criterion, device)
-        
-        # Calculate validation metrics
-        val_cm, val_report, val_macro_f1, val_weighted_f1 = calculate_metrics(
-            val_preds, val_targets, phase="val", save_dir=save_dir
+        # Setup training components
+        self.model, self.criterion, self.optimizer, self.scheduler = setup_training(
+            model=model,
+            train_labels=[label for _, label in train_dataset],
+            num_classes=len(train_dataset.classes),
+            device=device,
+            learning_rate=config.get('learning_rate', 1e-4)
         )
         
-        # Update learning rate
-        scheduler.step()
+        # Training state
+        self.best_val_f1 = 0.0
+        self.best_epoch = 0
+        self.patience = config.get('patience', 15)
+        self.patience_counter = 0
+        self.history = {
+            'train_loss': [], 'train_f1': [],
+            'val_loss': [], 'val_f1': []
+        }
         
-        # Update history
-        history['train_loss'].append(train_loss)
-        history['train_acc'].append(train_report['accuracy'])
-        history['train_f1'].append(train_macro_f1)
-        history['val_loss'].append(val_loss)
-        history['val_acc'].append(val_report['accuracy'])
-        history['val_f1'].append(val_macro_f1)
-        
-        # Save best model based on validation F1 score
-        if val_macro_f1 > best_val_f1:
-            print(f"Validation F1 improved from {best_val_f1:.4f} to {val_macro_f1:.4f}")
-            best_val_f1 = val_macro_f1
-            best_epoch = epoch
-            no_improve_count = 0
-            
-            # Save model and metrics
-            save_model(model, save_path, use_ema, ema_model)
-            save_training_history(history, save_dir)
-            plot_training_history(history, save_dir)
-            
-        else:
-            no_improve_count += 1
-            print(f"No improvement for {no_improve_count} epochs. Best F1: {best_val_f1:.4f} at epoch {best_epoch+1}")
-        
-        # Early stopping
-        if no_improve_count >= patience:
-            print(f"Early stopping at epoch {epoch+1}. Best F1: {best_val_f1:.4f} at epoch {best_epoch+1}")
-            break
+        # Create checkpoint directory
+        os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     
-    return best_val_f1 
+    def evaluate(self, dataset):
+        """Evaluate model on a dataset."""
+        # Create data loader
+        loader = DataLoader(
+            dataset,
+            batch_size=self.config.get('batch_size', DEFAULT_BATCH_SIZE) * 2,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True
+        )
+        
+        # Run validation
+        metrics = validate(
+            self.model, loader, self.criterion,
+            self.device, dataset.classes
+        )
+        
+        return metrics
+    
+    def train(self):
+        """Main training loop with improved early stopping."""
+        num_epochs = self.config.get('num_epochs', DEFAULT_NUM_EPOCHS)
+        
+        print("\nStarting training...")
+        print(f"Training on {len(self.train_dataset)} samples")
+        print(f"Validating on {len(self.val_dataset)} samples")
+        print(f"Using device: {self.device}")
+        print(f"Number of classes: {len(self.train_dataset.classes)}")
+        
+        for epoch in range(num_epochs):
+            print(f"\nEpoch {epoch + 1}/{num_epochs}")
+            
+            # Training phase
+            train_metrics = train_epoch(
+                self.model, self.train_loader, self.criterion,
+                self.optimizer, self.device, self.scheduler
+            )
+            
+            # Validation phase
+            val_metrics = validate(
+                self.model, self.val_loader, self.criterion,
+                self.device, self.train_dataset.classes
+            )
+            
+            # Update learning rate
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                self.scheduler.step(val_metrics['f1'])
+            
+            # Store metrics
+            self.history['train_loss'].append(train_metrics['loss'])
+            self.history['train_f1'].append(train_metrics['f1'])
+            self.history['val_loss'].append(val_metrics['loss'])
+            self.history['val_f1'].append(val_metrics['f1'])
+            
+            # Print epoch metrics
+            print(f"\nEpoch {epoch + 1} Metrics:")
+            print(f"Train Loss: {train_metrics['loss']:.4f}, F1: {train_metrics['f1']:.4f}")
+            print(f"Val Loss: {val_metrics['loss']:.4f}, F1: {val_metrics['f1']:.4f}")
+            
+            # Save best model
+            if val_metrics['f1'] > self.best_val_f1:
+                self.best_val_f1 = val_metrics['f1']
+                self.best_epoch = epoch
+                self.patience_counter = 0
+                
+                # Save checkpoint
+                save_path = os.path.join(CHECKPOINT_DIR, 'best_model.pth')
+                save_model(
+                    self.model, self.optimizer, self.scheduler,
+                    epoch, val_metrics, save_path
+                )
+                
+                print(f"\nNew best model saved! (Validation F1: {self.best_val_f1:.4f})")
+            else:
+                self.patience_counter += 1
+                print(f"\nNo improvement for {self.patience_counter} epochs. "
+                      f"Best F1: {self.best_val_f1:.4f} at epoch {self.best_epoch + 1}")
+            
+            # Early stopping
+            if self.patience_counter >= self.patience:
+                print(f"\nEarly stopping at epoch {epoch + 1}. "
+                      f"Best F1: {self.best_val_f1:.4f} at epoch {self.best_epoch + 1}")
+                break
+        
+        # Save training history
+        save_training_history(self.history, CHECKPOINT_DIR)
+        plot_training_history(self.history, CHECKPOINT_DIR)
+        
+        print("\nTraining completed successfully!")
+        return self.best_val_f1 

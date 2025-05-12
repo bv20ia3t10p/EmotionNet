@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
-from emotion_net.config.constants import IMAGE_MEAN, IMAGE_STD
+from emotion_net.config.constants import IMAGE_MEAN, IMAGE_STD, EMOTIONS
 
 def load_data(data_dir, emotions):
     """Load image paths and labels from directory structure."""
@@ -37,18 +37,14 @@ class AdvancedEmotionDataset(Dataset):
         self.labels = labels
         self.mode = mode
         self.image_size = image_size
+        self.classes = list(EMOTIONS.values())  # Add classes attribute
         
         # Define strong augmentations for training
         if mode == 'train':
             self.transform = A.Compose([
                 # Resize with padding to maintain aspect ratio
                 A.LongestMaxSize(max_size=image_size),
-                A.PadIfNeeded(
-                    min_height=image_size, 
-                    min_width=image_size, 
-                    border_mode=cv2.BORDER_CONSTANT,
-                    value=0
-                ),
+                A.Resize(height=image_size, width=image_size),  # Simple resize instead of PadIfNeeded
                 
                 # Very mild spatial transformations that preserve facial features
                 A.HorizontalFlip(p=0.3),  # Reduced probability
@@ -77,19 +73,6 @@ class AdvancedEmotionDataset(Dataset):
                     ),
                 ], p=0.5),
                 
-                # Very mild noise and compression
-                A.OneOf([
-                    A.GaussNoise(
-                        var_limit=(5.0, 20.0),
-                        p=1.0
-                    ),
-                    A.ImageCompression(
-                        quality_lower=97,
-                        quality_upper=100,
-                        p=1.0
-                    ),
-                ], p=0.2),  # Reduced probability
-                
                 # Normalize and convert to tensor
                 A.Normalize(mean=IMAGE_MEAN, std=IMAGE_STD),
                 ToTensorV2(),
@@ -97,14 +80,8 @@ class AdvancedEmotionDataset(Dataset):
         else:
             # Minimal transforms for validation and test
             self.transform = A.Compose([
-                # Preserve aspect ratio in test mode
-                A.LongestMaxSize(max_size=image_size),
-                A.PadIfNeeded(
-                    min_height=image_size, 
-                    min_width=image_size, 
-                    border_mode=cv2.BORDER_CONSTANT,
-                    value=0
-                ),
+                # Simple resize for validation/test
+                A.Resize(height=image_size, width=image_size),
                 A.Normalize(mean=IMAGE_MEAN, std=IMAGE_STD),
                 ToTensorV2(),
             ])

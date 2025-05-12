@@ -1,77 +1,73 @@
-"""Model management and optimization utilities."""
+"""Model management utilities for emotion recognition training."""
 
+import os
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from emotion_net.config.constants import CHECKPOINT_DIR
 
-from emotion_net.models.ema import EMA
-from emotion_net.config.constants import EMOTIONS
-
-def setup_training(model, learning_rate, device, use_amp=True, use_ema=True):
-    """Setup model, optimizer, scheduler, and other training components."""
-    # Setup EMA if enabled
-    ema_model = EMA(model, decay=0.999) if use_ema else None
+def setup_training(model, train_labels, num_classes, device, learning_rate=1e-4):
+    """Setup model, criterion, optimizer and scheduler for training."""
+    # Calculate class weights for weighted loss
+    class_weights = calculate_class_weights(train_labels, num_classes)
+    class_weights = torch.FloatTensor(class_weights).to(device)
     
-    # Setup AMP if enabled
-    scaler = torch.cuda.amp.GradScaler() if use_amp else None
+    # Create criterion with class weights
+    criterion = create_criterion(class_weights)
     
-    # Split parameters for different learning rates
-    backbone_params = []
-    other_params = []
-    
-    for name, param in model.named_parameters():
-        if "backbone" in name:
-            backbone_params.append(param)
-        else:
-            other_params.append(param)
-    
-    # Create optimizer with different learning rates
-    optimizer = AdamW([
-        {'params': backbone_params, 'lr': learning_rate * 0.1},  # Lower LR for pretrained backbone
-        {'params': other_params, 'lr': learning_rate}
-    ], weight_decay=1e-4)
-    
-    # Create learning rate scheduler
-    scheduler = CosineAnnealingWarmRestarts(
-        optimizer, T_0=5, T_mult=2, eta_min=learning_rate * 0.01
+    # Create optimizer with weight decay
+    optimizer = AdamW(
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=0.01
     )
     
-    return ema_model, scaler, optimizer, scheduler
+    # Create learning rate scheduler
+    scheduler = ReduceLROnPlateau(
+        optimizer,
+        mode='max',
+        factor=0.5,
+        patience=5,
+        verbose=True
+    )
+    
+    return model, criterion, optimizer, scheduler
 
-def calculate_class_weights(train_loader, class_weights_boost=1.5, device=None):
-    """Calculate class weights for imbalanced dataset."""
-    # Calculate class counts
-    class_counts = torch.zeros(len(EMOTIONS))
-    for _, label in train_loader.dataset:
+def calculate_class_weights(labels, num_classes):
+    """Calculate class weights for weighted loss."""
+    # Count samples per class
+    class_counts = torch.zeros(num_classes)
+    for label in labels:
         class_counts[label] += 1
     
-    # Calculate weights using inverse frequency with smoothing
-    total_samples = class_counts.sum()
-    class_weights = total_samples / (len(class_counts) * (class_counts + 1e-6))
+    # Calculate weights (inverse of frequency)
+    total_samples = len(labels)
+    class_weights = total_samples / (num_classes * class_counts)
     
-    # Apply class weight boosting for important classes
-    class_weights[0] *= class_weights_boost  # angry
-    class_weights[6] *= class_weights_boost  # neutral
-    
-    # Normalize weights
-    class_weights = class_weights / class_weights.mean()
-    
-    print("Class weights:", class_weights.numpy())
-    
-    if device:
-        class_weights = class_weights.to(device)
+    # Print class distribution
+    print("\nClass Distribution:")
+    for i, (count, weight) in enumerate(zip(class_counts, class_weights)):
+        print(f"Class {i}: {int(count)} samples, weight: {weight:.2f}")
     
     return class_weights
 
-def create_criterion(class_weights, device):
-    """Create loss criterion with class weights."""
-    return nn.CrossEntropyLoss(weight=class_weights.to(device))
+def create_criterion(class_weights):
+    """Create weighted cross entropy loss criterion."""
+    return nn.CrossEntropyLoss(weight=class_weights)
 
-def save_model(model, save_path, use_ema=False, ema_model=None):
+def save_model(model, optimizer, scheduler, epoch, metrics, save_path):
     """Save model checkpoint."""
-    if use_ema and ema_model is not None:
-        torch.save(model.state_dict(), save_path)
-        ema_model.restore()
-    else:
-        torch.save(model.state_dict(), save_path) 
+    # Create checkpoint directory if it doesn't exist
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    
+    # Save checkpoint
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+        'metrics': metrics
+    }, save_path)
+    
+    print(f"Model saved to {save_path}") 

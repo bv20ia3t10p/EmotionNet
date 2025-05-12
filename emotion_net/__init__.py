@@ -1,3 +1,3 @@
-"""EmotionNet - A high-performance emotion recognition model."""
+"""EmotionNet package for emotion recognition."""
 
-__version__ = "1.0.0" 
+__version__ = "0.1.0" 

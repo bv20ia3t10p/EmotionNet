@@ -9,8 +9,8 @@ echo "Starting EmotionNet training..."
 DATA_DIR="./extracted/emotion/train"
 TEST_DIR="./extracted/emotion/test"
 MODEL_DIR="./models"
-BATCH_SIZE=80
-EPOCHS=80
+BATCH_SIZE=128
+EPOCHS=128
 LEARNING_RATE=0.001
 IMAGE_SIZE=224
 BACKBONES=("efficientnet_b0" "efficientnet_b1")  # Array of backbones
