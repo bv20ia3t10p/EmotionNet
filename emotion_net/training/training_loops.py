@@ -41,8 +41,26 @@ def train_epoch(model, train_loader, criterion, optimizer, device, scheduler=Non
         
         # Forward pass with mixed precision
         with autocast():
-            outputs, _ = model(images)
-            loss = mixup_criterion(criterion, outputs, targets_a, targets_b, lam)
+            # Handle different model output formats
+            outputs = model(images)
+            
+            # Expert model returns a dictionary
+            if isinstance(outputs, dict):
+                # Use direct_logits for classification if available, otherwise first item
+                if 'direct_logits' in outputs:
+                    logits = outputs['direct_logits']
+                else:
+                    # Fall back to group_logits if direct_logits not available
+                    logits = outputs['group_logits']
+            else:
+                # Handle case where model returns a tuple of (outputs, _)
+                if isinstance(outputs, tuple) and len(outputs) >= 1:
+                    logits = outputs[0]
+                else:
+                    # Just use the outputs directly
+                    logits = outputs
+            
+            loss = mixup_criterion(criterion, logits, targets_a, targets_b, lam)
         
         # Backward pass
         optimizer.zero_grad()
@@ -59,7 +77,7 @@ def train_epoch(model, train_loader, criterion, optimizer, device, scheduler=Non
             ema.update()
         
         # Store predictions for metrics (use original labels before mixup for F1 calc)
-        preds = torch.argmax(outputs, dim=1)
+        preds = torch.argmax(logits, dim=1)
         all_preds.extend(preds.cpu().numpy())
         all_labels.extend(labels.cpu().numpy())
         
@@ -94,14 +112,31 @@ def validate(model, val_loader, criterion, device, labels):
         for images, labels_batch in pbar:
             images, labels_batch = images.to(device), labels_batch.to(device)
             
-            # Forward pass (consider moving model call out of autocast if NaNs persist)
-            outputs, _ = model(images)
+            # Forward pass
+            outputs = model(images)
+            
+            # Expert model returns a dictionary
+            if isinstance(outputs, dict):
+                # Use direct_logits for classification if available, otherwise first item
+                if 'direct_logits' in outputs:
+                    logits = outputs['direct_logits']
+                else:
+                    # Fall back to group_logits if direct_logits not available
+                    logits = outputs['group_logits']
+            else:
+                # Handle case where model returns a tuple of (outputs, _)
+                if isinstance(outputs, tuple) and len(outputs) >= 1:
+                    logits = outputs[0]
+                else:
+                    # Just use the outputs directly
+                    logits = outputs
+            
             with autocast():
-                loss = criterion(outputs, labels_batch)
+                loss = criterion(logits, labels_batch)
             
             # Update metrics
             total_loss += loss.item()
-            preds = torch.argmax(outputs, dim=1)
+            preds = torch.argmax(logits, dim=1)
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels_batch.cpu().numpy())
             
