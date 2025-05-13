@@ -3,40 +3,42 @@
 # Exit on any error
 set -e
 
-echo "Starting EmotionNet training for FER2013 with expert architecture..."
+echo "Starting EmotionNet training for FER2013 with focal loss (no bias correction)..."
 
 # --- Configuration ---
 # Updated paths to use the FER2013 dataset in the repository
 DATA_DIR="./dataset/fer2013"       # Path to FER2013 data directory with CSV files
-MODEL_DIR="./models/fer2013_expert" # New model directory for the expert architecture
+MODEL_DIR="./models/fer2013_focal_loss" # New model directory for focal loss approach
 
-# Expert architecture hyperparameters
-BATCH_SIZE=16                      # Smaller batch size for larger model
-EPOCHS=200                         # Extended training time for complex model
-LEARNING_RATE=0.00005              # Very small learning rate for stability
-IMAGE_SIZE=224
-BACKBONE="resnet50"                # Using a supported vision backbone
-LOSS_TYPE="focal"                  # Using focal loss which is supported
-FOCAL_GAMMA=2.0                    # Standard gamma setting
-LABEL_SMOOTHING=0.15               # Moderate label smoothing
-MIXUP_ALPHA=0.0                    # Disable mixup (using better techniques)
-CUTMIX_ALPHA=0.0                   # Disable cutmix (using better techniques)
-DROP_PATH_RATE=0.2                 # Moderate dropout
-SCHEDULER_TYPE="cosine_annealing"  # Better for long training runs
+# Advanced model hyperparameters optimized for focal loss approach
+BATCH_SIZE=32                      # Lower batch size for better learning with focal loss
+EPOCHS=100                         # Standard number of epochs 
+LEARNING_RATE=0.0002               # Standard learning rate
+IMAGE_SIZE=224                     # Standard image size 
+BACKBONE="efficientnet_b0.ra_in1k" # Using proven, available backbone
+LOSS_TYPE="focal"                  # Use focal loss directly instead of cross entropy
+FOCAL_GAMMA=3.0                    # Higher gamma focuses more on hard examples
+LABEL_SMOOTHING=0.1                # Standard label smoothing
+MIXUP_ALPHA=0.2                    # Added mixup for better generalization
+CUTMIX_ALPHA=0.1                   # Light cutmix for augmentation
+DROP_PATH_RATE=0.1                 # Added regularization
+SCHEDULER_TYPE="cosine_annealing"  # Better exploration of parameter space
 NUM_WORKERS=4
-PATIENCE=30                        # Higher patience for complex model
-VAL_SPLIT_RATIO=0.1
-WEIGHT_DECAY=0.0002                # Moderate regularization
-OPTIMIZER="adamw"                  # AdamW with proper weight decay
-WARMUP_EPOCHS=15                   # Extended warmup period
-GRADIENT_CLIP=1.0                  # Prevent exploding gradients
-ARCHITECTURE="expert"              # Use expert model architecture
+PATIENCE=15                        # Increased patience for focal loss training
+VAL_SPLIT_RATIO=0.1                # Standard validation split
+WEIGHT_DECAY=0.0005                # Standard weight decay
+OPTIMIZER="adamw"                  # Better optimizer with weight decay
+WARMUP_EPOCHS=5                    # Increased warmup for focal loss stability
+GRADIENT_CLIP=1.0                  # Standard gradient clipping
+ARCHITECTURE="expert"              # Using expert model
+EMBEDDING_SIZE=512                 # Standard embedding size
 ATTENTION_TYPE="cbam"              # Use CBAM attention mechanism
-SAD_CLASS_WEIGHT=2.0               # Higher weight for sad class
-EMOTION_GROUPS="sad-neutral-angry,happy-surprise,fear-disgust" # Group similar emotions
-EMBEDDING_SIZE=512                 # Embedding size for features
-STOCHASTIC_DEPTH=0.2               # Add stochastic depth for regularization
-FREEZE_BACKBONE_EPOCHS=5           # Freeze backbone for initial epochs
+
+# Install additional dependencies if not already installed
+if ! pip list | grep -q "timm"; then
+    echo "Installing additional dependencies..."
+    pip install timm>=0.6.0 transformers>=4.20.0 requests>=2.27.0
+fi
 
 # Create model directory if it doesn't exist
 mkdir -p "$MODEL_DIR"
@@ -53,10 +55,13 @@ fi
 
 echo "Using Python interpreter: $PYTHON_CMD"
 
-# --- Run Training ---
-echo "Running train.py with expert model architecture..."
+# --- Run Training with Focal Loss ---
+echo "Running training with focal loss (no bias correction)..."
 # Add current directory to PYTHONPATH to help find the emotion_net module
 export PYTHONPATH="$PYTHONPATH:$(pwd)"
+
+# Print debug info
+echo "DEBUG: Using BATCH_SIZE=$BATCH_SIZE and EPOCHS=$EPOCHS"
 
 $PYTHON_CMD emotion_net/train.py \
     --dataset_name "fer2013" \
@@ -82,29 +87,19 @@ $PYTHON_CMD emotion_net/train.py \
     --warmup_epochs $WARMUP_EPOCHS \
     --gradient_clip $GRADIENT_CLIP \
     --architecture $ARCHITECTURE \
-    --attention_type $ATTENTION_TYPE \
-    --sad_class_weight $SAD_CLASS_WEIGHT \
     --embedding_size $EMBEDDING_SIZE \
-    --emotion_groups "$EMOTION_GROUPS" \
+    --attention_type "$ATTENTION_TYPE" \
     --class_weights \
-    --pretrained \
     --gem_pooling \
-    --decoupled_head \
     --feature_fusion \
-    --stochastic_depth $STOCHASTIC_DEPTH \
-    --multi_crop_inference \
-    --use_ema \
-    --consistency_loss \
-    --freeze_backbone_epochs $FREEZE_BACKBONE_EPOCHS \
-    --channels_last \
-    --use_amp \
-    --class_balanced_loss
+    --pretrained \
+    --seed 42
 
 # Check exit status
 if [ $? -ne 0 ]; then
-    echo "Error: Training failed!"
+    echo "Error: Training with focal loss failed!"
     exit 1
 fi
 
-echo "FER2013 training with expert model completed successfully!"
-echo "Checkpoints saved in $MODEL_DIR" 
+echo "Training completed successfully!"
+echo "Model saved in $MODEL_DIR" 

@@ -126,6 +126,9 @@ def main():
     # Parse arguments
     args = parse_args()
     
+    # Debug print
+    print(f"DEBUG: Received arguments: num_epochs={args.num_epochs}, batch_size={args.batch_size}")
+    
     # Set logging level for PIL to show more info
     import logging
     logging.basicConfig(level=logging.INFO)
@@ -229,7 +232,8 @@ def main():
                 gem_pooling=args.gem_pooling,
                 decoupled_head=args.decoupled_head,
                 drop_path_rate=args.drop_path_rate,
-                channels_last=args.channels_last
+                channels_last=args.channels_last,
+                block_disgust=True  # Always block the disgust class
             ).to(device)
             
             # Create loss function

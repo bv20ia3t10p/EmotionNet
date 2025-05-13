@@ -352,41 +352,6 @@ class FER2013DataManager:
         else:
             print(f"Warning: No emotion column found. Using neutral class for all images.")
         
-        # Calculate class weights for augmentation (training only)
-        class_counts = {}
-        max_count = 0
-        if emotion_col and is_train:
-            for e in df[emotion_col]:
-                e = int(e)
-                if e not in class_counts:
-                    class_counts[e] = 0
-                class_counts[e] += 1
-                max_count = max(max_count, class_counts[e])
-        
-        # Calculate augmentation ratios based on class imbalance
-        augment_emotions = {}
-        if class_counts and max_count > 0:
-            for e, count in class_counts.items():
-                # Calculate ratio relative to most common class
-                ratio = max_count / count
-                # Add 5x more augmentations for disgust class (always rare)
-                if e == 1:  # disgust
-                    ratio *= 5
-                
-                # Set upper/lower bounds on augmentation
-                if ratio > 10:
-                    ratio = 10  # Cap at 10x
-                elif ratio < 1:
-                    ratio = 1  # No augmentation for already common classes
-                
-                if ratio > 1.5:  # Only augment if there's significant imbalance
-                    augment_emotions[e] = int(ratio)
-            
-            print(f"Class-based augmentation ratios: {augment_emotions}")
-        else:
-            # Fallback to previous fixed ratios if we couldn't compute class weights
-            augment_emotions = {1: 10, 2: 3, 5: 2}
-        
         # Process rows
         count = 0
         
@@ -464,84 +429,6 @@ class FER2013DataManager:
                 img_path = os.path.abspath(img_path)
                 
                 pil_img.save(img_path)
-                
-                # Create augmented versions for minority classes during training
-                if is_train and emotion_idx in augment_emotions:
-                    num_augmentations = augment_emotions[emotion_idx]
-                    
-                    # Different augmentation strategies for different emotions
-                    for aug_idx in range(num_augmentations):
-                        # Create augmented versions with different transformations
-                        aug_img = pil_img.copy()
-                        
-                        # Special treatment per emotion
-                        if emotion_idx == 1:  # disgust - needs more intense augmentation
-                            if aug_idx % 5 == 0:  # Rotate more
-                                angle = np.random.uniform(-20, 20)
-                                aug_img = aug_img.rotate(angle, resample=Image.BILINEAR)
-                            elif aug_idx % 5 == 1:  # Higher contrast
-                                factor = np.random.uniform(1.1, 1.4)
-                                aug_img = ImageEnhance.Contrast(aug_img).enhance(factor)
-                            elif aug_idx % 5 == 2:  # Random shifts
-                                aug_img = ImageOps.expand(aug_img, border=(
-                                    np.random.randint(0, 7),  # left
-                                    np.random.randint(0, 7),  # top
-                                    np.random.randint(0, 7),  # right
-                                    np.random.randint(0, 7)   # bottom
-                                ), fill=0)
-                                aug_img = aug_img.resize((48, 48), Image.BILINEAR)
-                            elif aug_idx % 5 == 3:  # Brightness
-                                factor = np.random.uniform(0.8, 1.2)
-                                aug_img = ImageEnhance.Brightness(aug_img).enhance(factor)
-                            else:  # Slight zoom
-                                zoom = np.random.uniform(0.9, 1.1)
-                                w, h = aug_img.size
-                                new_w, new_h = int(w * zoom), int(h * zoom)
-                                aug_img = aug_img.resize((new_w, new_h), Image.BILINEAR)
-                                # Center crop to original size
-                                left = max(0, (new_w - w) // 2)
-                                top = max(0, (new_h - h) // 2)
-                                right = min(new_w, left + w)
-                                bottom = min(new_h, top + h)
-                                aug_img = aug_img.crop((left, top, right, bottom))
-                                aug_img = aug_img.resize((48, 48), Image.BILINEAR)
-                        
-                        elif emotion_idx == 2:  # fear - moderate augmentation
-                            if aug_idx % 3 == 0:  # Rotate
-                                angle = np.random.uniform(-15, 15)
-                                aug_img = aug_img.rotate(angle, resample=Image.BILINEAR)
-                            elif aug_idx % 3 == 1:  # Adjust contrast
-                                factor = np.random.uniform(0.9, 1.3)
-                                aug_img = ImageEnhance.Contrast(aug_img).enhance(factor)
-                            else:  # Slight shift
-                                aug_img = ImageOps.expand(aug_img, border=(
-                                    np.random.randint(0, 5),  # left
-                                    np.random.randint(0, 5),  # top
-                                    np.random.randint(0, 5),  # right
-                                    np.random.randint(0, 5)   # bottom
-                                ), fill=0)
-                                aug_img = aug_img.resize((48, 48), Image.BILINEAR)
-                        
-                        else:  # other emotions - basic augmentation
-                            if aug_idx % 3 == 0:  # Rotate
-                                angle = np.random.uniform(-10, 10)
-                                aug_img = aug_img.rotate(angle, resample=Image.BILINEAR)
-                            elif aug_idx % 3 == 1:  # Adjust contrast
-                                factor = np.random.uniform(0.8, 1.2)
-                                aug_img = ImageEnhance.Contrast(aug_img).enhance(factor)
-                            else:  # Slight shift
-                                aug_img = ImageOps.expand(aug_img, border=(
-                                    np.random.randint(0, 3),  # left
-                                    np.random.randint(0, 3),  # top
-                                    np.random.randint(0, 3),  # right
-                                    np.random.randint(0, 3)   # bottom
-                                ), fill=0)
-                                aug_img = aug_img.resize((48, 48), Image.BILINEAR)
-                        
-                        # Save augmented image
-                        aug_path = os.path.join(emotion_dir, f"{idx}_aug{aug_idx}.png")
-                        aug_path = os.path.abspath(aug_path)
-                        aug_img.save(aug_path)
                 
                 # Verify the image was saved correctly
                 if not os.path.exists(img_path):
