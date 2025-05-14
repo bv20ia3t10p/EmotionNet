@@ -1,9 +1,25 @@
-"""Exponential Moving Average model for more stable results."""
+"""Exponential Moving Average (EMA) implementation for model weights.
+
+EMA is a common technique to improve model stability during training.
+"""
+
+import torch
+
 
 class EMA:
-    """Exponential Moving Average model wrapper for more stable training."""
+    """Exponential Moving Average for model weights.
+    
+    This maintains a moving average of model parameters during training,
+    which can produce better results and more stable convergence.
+    """
     
     def __init__(self, model, decay=0.999):
+        """Initialize EMA with a model.
+        
+        Args:
+            model: The PyTorch model
+            decay: The EMA decay rate (higher = slower moving average)
+        """
         self.model = model
         self.decay = decay
         self.shadow = {}
@@ -15,7 +31,7 @@ class EMA:
                 self.shadow[name] = param.data.clone()
     
     def update(self):
-        """Update the shadow parameters."""
+        """Update the EMA parameters with current model parameters."""
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 assert name in self.shadow
@@ -23,7 +39,7 @@ class EMA:
                 self.shadow[name] = new_average.clone()
     
     def apply_shadow(self):
-        """Apply shadow parameters to the model."""
+        """Apply the EMA weights to the model for inference."""
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 assert name in self.shadow
@@ -31,7 +47,7 @@ class EMA:
                 param.data = self.shadow[name]
     
     def restore(self):
-        """Restore the original parameters."""
+        """Restore the original model weights."""
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 assert name in self.backup

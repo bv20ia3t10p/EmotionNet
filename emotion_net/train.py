@@ -6,7 +6,13 @@ import argparse
 import numpy as np
 from emotion_net.training import EmotionTrainer
 from emotion_net.data import BaseEmotionDataset, FER2013DataManager, RAFDBDataManager
-from emotion_net.models.ensemble import EnsembleModel
+# Import EnsembleModel but also catch any import errors
+try:
+    from emotion_net.models.ensemble import EnsembleModel
+    ENSEMBLE_MODEL_AVAILABLE = True
+except ImportError:
+    print("Warning: EnsembleModel not properly implemented, will use SOTA models only")
+    ENSEMBLE_MODEL_AVAILABLE = False
 from emotion_net.models import create_model, create_loss_fn
 from emotion_net.config.constants import (
     DEFAULT_NUM_EPOCHS, DEFAULT_BATCH_SIZE, DEFAULT_LEARNING_RATE,
@@ -46,7 +52,7 @@ def parse_args():
     parser.add_argument('--val_split_ratio', type=float, default=0.1,
                       help='Validation split ratio for FER2013 (default: 0.1)')
     parser.add_argument('--loss_type', type=str, default='cross_entropy',
-                      choices=['cross_entropy', 'focal', 'hybrid'],
+                      choices=['cross_entropy', 'focal', 'hybrid', 'sota_emotion'],
                       help="Type of loss function to use (default: cross_entropy)")
     parser.add_argument('--focal_gamma', type=float, default=2.0,
                       help="Gamma parameter for Focal Loss (default: 2.0)")
@@ -63,9 +69,10 @@ def parse_args():
                       help="Type of LR scheduler (default: one_cycle)")
     parser.add_argument('--num_workers', type=int, default=4,
                       help="Number of data loading workers (default: 4)")
-    parser.add_argument('--architecture', type=str, default='ensemble',
-                      choices=['ensemble', 'hierarchical', 'expert'],
-                      help="Model architecture type (default: ensemble)")
+    parser.add_argument('--architecture', type=str, default='sota_resemote_medium',
+                      choices=['ensemble', 'hierarchical', 'expert', 
+                               'sota_resemote_small', 'sota_resemote_medium', 'sota_resemote_large'],
+                      help="Model architecture type (default: sota_resemote_medium)")
     parser.add_argument('--attention_type', type=str, default=None,
                       choices=[None, 'self', 'cbam'],
                       help="Attention mechanism to use (default: None)")
@@ -219,50 +226,61 @@ def main():
             'triplet_margin': getattr(args, 'triplet_margin', 0.3),
         }
         
-        # Initialize model based on architecture type
-        if args.architecture == 'expert':
-            print("\nCreating expert model...")
-            model = create_model(
-                model_name='expert',
-                num_classes=num_classes,
-                pretrained=args.pretrained,
-                backbone_name=args.backbones[0] if args.backbones else 'resnet50',
-                embedding_size=args.embedding_size,
-                emotion_groups=args.emotion_groups,
-                gem_pooling=args.gem_pooling,
-                decoupled_head=args.decoupled_head,
-                drop_path_rate=args.drop_path_rate,
-                channels_last=args.channels_last,
-                block_disgust=True  # Always block the disgust class
-            ).to(device)
-            
-            # Create loss function
-            loss_fn = create_loss_fn(
-                loss_type=args.loss_type,
-                num_classes=num_classes,
-                focal_gamma=args.focal_gamma,
-                label_smoothing=args.label_smoothing,
-                triplet_margin=args.triplet_margin,
-                class_weights=args.class_weights,
-                sad_class_weight=args.sad_class_weight
-            )
-            
-            config['custom_loss_fn'] = loss_fn
-            architecture_name = f"ExpertModel(backbone={args.backbones[0] if args.backbones else 'resnet50'})"
-        else:
-            # Use the original ensemble model
+        # --- Create model ---
+        print(f"\nCreating model with architecture: {args.architecture}")
+        if args.architecture == 'ensemble' and ENSEMBLE_MODEL_AVAILABLE:
+            # Create an ensemble of models
             model = EnsembleModel(
                 backbones=args.backbones,
                 num_classes=num_classes,
-                pretrained=True,
+                pretrained=getattr(args, 'pretrained', True),
                 drop_path_rate=getattr(args, 'drop_path_rate', 0.0)
-            ).to(device)
-            architecture_name = f"EnsembleModel with {args.backbones}"
-            config['custom_loss_fn'] = None
+            )
+        elif args.architecture in ['sota_resemote_small', 'sota_resemote_medium', 'sota_resemote_large'] or not ENSEMBLE_MODEL_AVAILABLE:
+            # If ensemble is not available or a SOTA model was specified, use SOTA model
+            model_name = args.architecture
+            if args.architecture not in ['sota_resemote_small', 'sota_resemote_medium', 'sota_resemote_large']:
+                print(f"Warning: {args.architecture} not fully implemented, using sota_resemote_medium instead")
+                model_name = 'sota_resemote_medium'
+                
+            # Create state-of-the-art model
+            model = create_model(
+                model_name=model_name,
+                num_classes=num_classes,
+                pretrained=getattr(args, 'pretrained', True),
+                embedding_size=getattr(args, 'embedding_size', 512),
+                gem_pooling=getattr(args, 'gem_pooling', False),
+                drop_path_rate=getattr(args, 'drop_path_rate', 0.0),
+                channels_last=getattr(args, 'channels_last', False)
+            )
+        else:
+            raise ValueError(f"Architecture {args.architecture} not supported. Please choose from: ensemble, sota_resemote_small, sota_resemote_medium, sota_resemote_large")
+        
+        # Move model to device
+        model = model.to(device)
+        
+        # Create loss function
+        loss_fn = None
+        if args.architecture in ['sota_resemote_small', 'sota_resemote_medium', 'sota_resemote_large']:
+            # Use the specialized loss function for SOTA models
+            loss_fn = create_loss_fn(
+                'sota_emotion',
+                num_classes,
+                label_smoothing=args.label_smoothing,
+                aux_weight=0.4  # Can be made configurable via args
+            )
+        else:
+            # Use standard loss function for other architectures
+            loss_fn = create_loss_fn(
+                args.loss_type,
+                num_classes,
+                label_smoothing=args.label_smoothing,
+                focal_gamma=getattr(args, 'focal_gamma', 2.0)
+            )
         
         # Print info to logs
         print("\nCreating trainer...")
-        print(f"Model architecture: {architecture_name}")
+        print(f"Model architecture: {args.architecture}")
         print(f"Loss type: {args.loss_type}")
         print(f"Number of epochs: {args.num_epochs}")
         print(f"Batch size: {args.batch_size}")

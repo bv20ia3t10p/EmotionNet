@@ -3,145 +3,160 @@
 import os
 import torch
 import torch.nn as nn
-from torch.optim import AdamW
-from torch.optim.lr_scheduler import OneCycleLR, CosineAnnealingLR
-from emotion_net.config.constants import CHECKPOINT_DIR
-from .losses import FocalLoss
+import torch.nn.functional as F
 import numpy as np
+from torch.optim import Adam, AdamW, SGD
+from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
 
-def calculate_class_weights(labels, num_classes, dataset_name=None):
-    """Calculate class weights and counts.
-    
-    Args:
-        labels: List of integer labels
-        num_classes: Number of classes
-        dataset_name: Optional dataset name for dataset-specific weighting
-        
-    Returns:
-        tuple: (class_weights, class_counts)
-            - class_weights: Array of weights for each class (for loss function)
-            - class_counts: Array of counts for each class
-    """
+# Import our custom loss
+from emotion_net.models.sota_resemote import SOTAEmotionLoss
+
+# Calculate statistics from training data
+def calculate_class_weights(labels, num_classes, class_weight_factor=1.0):
+    """Calculate class weights for imbalanced datasets."""
     # Count occurrences of each class
-    counts = np.bincount(labels, minlength=num_classes)
+    class_counts = [0] * num_classes
+    for label in labels:
+        class_counts[label] += 1
     
-    # Handle empty classes to avoid division by zero
-    counts = np.maximum(counts, 1)
+    # Convert counts to weights (inversely proportional to count)
+    max_count = max(class_counts)
+    class_weights = []
+    for count in class_counts:
+        if count == 0:
+            # Avoid division by zero; set weight to 1.0 for classes with no samples
+            class_weights.append(1.0)
+        else:
+            # Scale by the ratio of occurrences relative to the most common class
+            class_weights.append((max_count / count) ** class_weight_factor)
     
-    # For RAF-DB, use a simpler inverse frequency weighting with sqrt to reduce extremes
-    if dataset_name == 'rafdb':
-        # sqrt(N/n_i) weighting - reduces extreme weights while still balancing
-        # This prevents the model from focusing too much on minority classes
-        N = sum(counts)
-        weights = np.sqrt(N / counts)
-        
-        # Normalize weights so they sum to num_classes
-        weights = weights / weights.sum() * num_classes
-        
-        # Apply small manual adjustments to prevent class collapse
-        # We need to prevent overweighting and causing class collapse
-        # Cap weights to prevent extremes - max weight should be 3x the min weight
-        max_weight = weights.max()
-        min_weight = weights.min()
-        if max_weight / min_weight > 3.0:
-            # Scale weights to have a max/min ratio of 3
-            weights = (weights - min_weight) / (max_weight - min_weight) * (3 * min_weight - min_weight) + min_weight
-    else:
-        # Default effective number of samples weighting
-        beta = 0.9999
-        effective_num = 1.0 - np.power(beta, counts)
-        weights = (1.0 - beta) / effective_num
-        
-        # Normalize weights
-        weights = weights / weights.sum() * num_classes
+    # Normalize weights (optional)
+    total_weight = sum(class_weights)
+    normalized_weights = [weight / total_weight * num_classes for weight in class_weights]
     
-    print("Class weights for loss function:")
-    for i in range(num_classes):
-        print(f"  Class {i}: {weights[i]:.4f} (count: {counts[i]})")
-        
-    return weights, counts
+    return normalized_weights, class_counts
 
-def create_criterion(class_weights, loss_type='cross_entropy', focal_gamma=2.0, label_smoothing=0.1, device='cuda'):
-    """Create a criterion based on loss type."""
-    class_weights = torch.FloatTensor(class_weights).to(device)
-    
-    if loss_type == 'focal':
-        print(f"Using Focal Loss with gamma: {focal_gamma}")
-        criterion = FocalLoss(alpha=class_weights, gamma=focal_gamma, reduction='mean')
-    elif loss_type == 'cross_entropy':
-        print(f"Using Cross Entropy Loss with label smoothing: {label_smoothing} and class weights")
-        criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)
-    else:
-        raise ValueError(f"Unsupported loss_type: {loss_type}. Choose 'cross_entropy' or 'focal'.")
-    
-    return criterion
+# Create loss function
+def create_criterion(loss_type, num_classes, device, 
+                     class_weights=None, focal_gamma=2.0, 
+                     label_smoothing=0.0, sad_class_weight=1.0, 
+                     custom_loss_fn=None, triplet_margin=0.3,
+                     dataset_name=None):
+    """Create loss function based on configuration."""
+    if custom_loss_fn is not None:
+        print("Using custom loss function.")
+        return custom_loss_fn
 
+    # If class weights are provided, convert to tensor
+    if class_weights is not None:
+        print(f"Using class weights: {class_weights}")
+        weight = torch.tensor(class_weights, dtype=torch.float32, device=device)
+    else:
+        weight = None
+    
+    # Apply additional weight to 'sad' class if required
+    if sad_class_weight != 1.0 and weight is not None:
+        # Find the index of 'sad' class based on dataset
+        sad_idx = 4  # Default for FER2013, RAFDB
+        if dataset_name == 'rafdb':
+            sad_idx = 4  # In RAFDB, sad is index 4 (0-indexed)
+        elif dataset_name == 'fer2013':
+            sad_idx = 4  # In FER2013, sad is index
+        
+        # Multiply sad class weight
+        if 0 <= sad_idx < len(weight):
+            print(f"Applying additional weight {sad_class_weight} to sad class (index {sad_idx})")
+            weight[sad_idx] *= sad_class_weight
+    
+    # Select loss function based on type
+    if loss_type == 'cross_entropy':
+        return nn.CrossEntropyLoss(weight=weight, label_smoothing=label_smoothing)
+    elif loss_type == 'focal':
+        from emotion_net.training.losses import FocalLoss
+        return FocalLoss(alpha=weight, gamma=focal_gamma, reduction='mean')
+    elif loss_type == 'hybrid':
+        from emotion_net.training.losses import HybridLoss
+        return HybridLoss(alpha=weight, gamma=focal_gamma, label_smoothing=label_smoothing)
+    elif loss_type == 'sota_emotion':
+        # Use our custom SOTAEmotionLoss
+        return SOTAEmotionLoss(
+            num_classes=num_classes,
+            label_smoothing=label_smoothing,
+            aux_weight=0.4
+        )
+    else:
+        raise ValueError(f"Unsupported loss type: {loss_type}")
+
+# Function to set up training components
 def setup_training(model, train_labels, num_classes, device, 
-                   learning_rate=1e-4, # This will be max_lr for OneCycleLR
-                   num_epochs=100, 
-                   steps_per_epoch=1, # Need steps_per_epoch for OneCycleLR
-                   label_smoothing_factor=0.0, 
-                   loss_type='cross_entropy', 
-                   focal_loss_gamma=2.0,
-                   scheduler_type='one_cycle',
-                   dataset_name=None): # Add dataset_name parameter
-    """Setup model, criterion, optimizer and scheduler for training."""
-    # Calculate class weights and counts
-    # We only need weights for the loss function here
-    class_weights, _ = calculate_class_weights(train_labels, num_classes, dataset_name) # Pass dataset_name
-    class_weights = torch.FloatTensor(class_weights).to(device)
-    
-    # Create criterion with class weights and label smoothing or Focal Loss
-    if loss_type == 'focal':
-        print(f"Using Focal Loss with gamma: {focal_loss_gamma} and class weights as alpha")
-        # Pass class_weights as alpha for explicit weighting
-        criterion = FocalLoss(alpha=class_weights, gamma=focal_loss_gamma, reduction='mean')
-    elif loss_type == 'cross_entropy':
-        print(f"Using Cross Entropy Loss with label smoothing: {label_smoothing_factor} and class weights")
-        criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing_factor)
+                  learning_rate=1e-4, num_epochs=50, steps_per_epoch=None,
+                  loss_type='cross_entropy', focal_loss_gamma=2.0, label_smoothing_factor=0.1,
+                  dataset_name=None, scheduler_type='cosine_annealing',
+                  weight_decay=0.0001, optimizer_type='adam', warmup_epochs=0,
+                  use_class_weights=False, sad_class_weight=1.0, triplet_margin=0.3,
+                  custom_loss_fn=None):
+    """Set up training components: model, criterion, optimizer, scheduler."""
+    # Initialize weights for imbalanced classes if requested
+    if use_class_weights and train_labels:
+        class_weights, _ = calculate_class_weights(train_labels, num_classes)
     else:
-        raise ValueError(f"Unsupported loss_type: {loss_type}. Choose 'cross_entropy' or 'focal'.")
+        class_weights = None
     
-    # Create optimizer with AdamW and weight decay
-    optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
+    # Create loss function
+    criterion = create_criterion(
+        loss_type=loss_type,
+        num_classes=num_classes,
+        device=device,
+        class_weights=class_weights,
+        focal_gamma=focal_loss_gamma,
+        label_smoothing=label_smoothing_factor,
+        sad_class_weight=sad_class_weight,
+        custom_loss_fn=custom_loss_fn,
+        triplet_margin=triplet_margin,
+        dataset_name=dataset_name
+    )
     
-    # Create scheduler
-    if scheduler_type == 'one_cycle':
-        print(f"Using OneCycleLR scheduler with max_lr: {learning_rate}")
+    # Create optimizer
+    if optimizer_type.lower() == 'adam':
+        optimizer = Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    elif optimizer_type.lower() == 'adamw':
+        optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    elif optimizer_type.lower() == 'sgd':
+        optimizer = SGD(model.parameters(), lr=learning_rate, momentum=0.9, weight_decay=weight_decay)
+    else:
+        raise ValueError(f"Unsupported optimizer type: {optimizer_type}")
+    
+    # Create learning rate scheduler
+    if scheduler_type == 'cosine_annealing':
+        scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs)
+    elif scheduler_type == 'one_cycle' and steps_per_epoch:
         scheduler = OneCycleLR(
             optimizer,
             max_lr=learning_rate,
             steps_per_epoch=steps_per_epoch,
             epochs=num_epochs,
-            pct_start=0.3,  # Spend 30% of time warming up
-            div_factor=25.0,  # Initial lr is max_lr/25
-            final_div_factor=1000.0  # Final lr is max_lr/1000
+            pct_start=0.3,
+            anneal_strategy='cos'
         )
-    elif scheduler_type == 'cosine_annealing':
-        print(f"Using CosineAnnealingLR scheduler with T_max: {num_epochs}")
-        scheduler = CosineAnnealingLR(
-            optimizer,
-            T_max=num_epochs,
-            eta_min=learning_rate / 100
-        )
-    else:  # 'none' or any other value
-        print("No scheduler used")
+    else:
         scheduler = None
     
     return model, criterion, optimizer, scheduler
 
-def save_model(model, optimizer, scheduler, epoch, metrics, save_path):
-    """Save model checkpoint."""
-    # Create checkpoint directory if it doesn't exist
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    
-    # Save checkpoint
-    torch.save({
-        'epoch': epoch,
+# Save model checkpoint
+def save_model(model, optimizer, epoch, save_path, scheduler=None, best_metrics=None):
+    """Save model checkpoint to disk."""
+    checkpoint = {
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
-        'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
-        'metrics': metrics
-    }, save_path)
+        'epoch': epoch
+    }
     
+    if scheduler is not None:
+        checkpoint['scheduler_state_dict'] = scheduler.state_dict()
+    
+    if best_metrics is not None:
+        checkpoint['best_metrics'] = best_metrics
+    
+    torch.save(checkpoint, save_path)
     print(f"Model saved to {save_path}") 

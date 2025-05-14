@@ -3,42 +3,33 @@
 # Exit on any error
 set -e
 
-echo "Starting EmotionNet training for FER2013 with focal loss (no bias correction)..."
+echo "Starting improved EmotionNet training for FER2013 using SOTA ResEmote model..."
 
 # --- Configuration ---
 # Updated paths to use the FER2013 dataset in the repository
 DATA_DIR="./dataset/fer2013"       # Path to FER2013 data directory with CSV files
-MODEL_DIR="./models/fer2013_focal_loss" # New model directory for focal loss approach
+MODEL_DIR="./models/fer2013_sota"  # New model directory for SOTA model
 
-# Advanced model hyperparameters optimized for focal loss approach
-BATCH_SIZE=32                      # Lower batch size for better learning with focal loss
-EPOCHS=100                         # Standard number of epochs 
-LEARNING_RATE=0.0002               # Standard learning rate
-IMAGE_SIZE=224                     # Standard image size 
-BACKBONE="efficientnet_b0.ra_in1k" # Using proven, available backbone
-LOSS_TYPE="focal"                  # Use focal loss directly instead of cross entropy
-FOCAL_GAMMA=3.0                    # Higher gamma focuses more on hard examples
-LABEL_SMOOTHING=0.1                # Standard label smoothing
-MIXUP_ALPHA=0.2                    # Added mixup for better generalization
-CUTMIX_ALPHA=0.1                   # Light cutmix for augmentation
-DROP_PATH_RATE=0.1                 # Added regularization
+# Training configuration
+BATCH_SIZE=16                      # Smaller batch size for better generalization
+EPOCHS=80                          # More epochs for initial training
+LEARNING_RATE=0.00005              # Lower learning rate for fine-tuning on FER2013
+IMAGE_SIZE=256                     # Larger image size for more details 
+BACKBONE="resnet34"                # Use ResNet34 backbone for sota_resemote_medium
+LABEL_SMOOTHING=0.2                # Increased label smoothing for better generalization
+MIXUP_ALPHA=0.4                    # Stronger mixup augmentation
+CUTMIX_ALPHA=0.3                   # Stronger cutmix augmentation
+DROP_PATH_RATE=0.2                 # Increased regularization
 SCHEDULER_TYPE="cosine_annealing"  # Better exploration of parameter space
-NUM_WORKERS=4
-PATIENCE=15                        # Increased patience for focal loss training
-VAL_SPLIT_RATIO=0.1                # Standard validation split
-WEIGHT_DECAY=0.0005                # Standard weight decay
+NUM_WORKERS=4                      # Adjust based on CPU cores available
+PATIENCE=20                        # Increased patience for better convergence
+VAL_SPLIT_RATIO=0.15               # Increased validation set for better evaluation
+WEIGHT_DECAY=0.01                  # Reduced weight decay for fine-tuning
 OPTIMIZER="adamw"                  # Better optimizer with weight decay
-WARMUP_EPOCHS=5                    # Increased warmup for focal loss stability
+WARMUP_EPOCHS=5                    # Shorter warmup for fine-tuning
 GRADIENT_CLIP=1.0                  # Standard gradient clipping
-ARCHITECTURE="expert"              # Using expert model
-EMBEDDING_SIZE=512                 # Standard embedding size
-ATTENTION_TYPE="cbam"              # Use CBAM attention mechanism
-
-# Install additional dependencies if not already installed
-if ! pip list | grep -q "timm"; then
-    echo "Installing additional dependencies..."
-    pip install timm>=0.6.0 transformers>=4.20.0 requests>=2.27.0
-fi
+ARCHITECTURE="sota_resemote_medium" # Using the state-of-the-art ResEmoteNet model
+EMBEDDING_SIZE=512                 # Match embedding size to ResNet34 feature dim
 
 # Create model directory if it doesn't exist
 mkdir -p "$MODEL_DIR"
@@ -55,13 +46,14 @@ fi
 
 echo "Using Python interpreter: $PYTHON_CMD"
 
-# --- Run Training with Focal Loss ---
-echo "Running training with focal loss (no bias correction)..."
+# --- Run Training ---
+echo "Running training with SOTA ResEmote model (architecture: $ARCHITECTURE)..."
 # Add current directory to PYTHONPATH to help find the emotion_net module
 export PYTHONPATH="$PYTHONPATH:$(pwd)"
 
 # Print debug info
-echo "DEBUG: Using BATCH_SIZE=$BATCH_SIZE and EPOCHS=$EPOCHS"
+echo "DEBUG: Using BATCH_SIZE=$BATCH_SIZE, BACKBONE=$BACKBONE and EPOCHS=$EPOCHS"
+echo "DEBUG: Using architecture=$ARCHITECTURE with embedding_size=$EMBEDDING_SIZE"
 
 $PYTHON_CMD emotion_net/train.py \
     --dataset_name "fer2013" \
@@ -72,8 +64,7 @@ $PYTHON_CMD emotion_net/train.py \
     --learning_rate $LEARNING_RATE \
     --image_size $IMAGE_SIZE \
     --backbones $BACKBONE \
-    --loss_type "$LOSS_TYPE" \
-    --focal_gamma $FOCAL_GAMMA \
+    --loss_type "sota_emotion" \
     --label_smoothing $LABEL_SMOOTHING \
     --mixup_alpha $MIXUP_ALPHA \
     --cutmix_alpha $CUTMIX_ALPHA \
@@ -88,18 +79,41 @@ $PYTHON_CMD emotion_net/train.py \
     --gradient_clip $GRADIENT_CLIP \
     --architecture $ARCHITECTURE \
     --embedding_size $EMBEDDING_SIZE \
-    --attention_type "$ATTENTION_TYPE" \
+    --attention_type "cbam" \
     --class_weights \
     --gem_pooling \
     --feature_fusion \
     --pretrained \
+    --random_erase 0.2 \
+    --multi_crop_inference \
+    --use_ema \
     --seed 42
 
 # Check exit status
 if [ $? -ne 0 ]; then
-    echo "Error: Training with focal loss failed!"
+    echo "Error: Training phase failed!"
     exit 1
 fi
 
 echo "Training completed successfully!"
-echo "Model saved in $MODEL_DIR" 
+echo "Model saved in $MODEL_DIR"
+
+# --- Run evaluation on the trained model ---
+echo "Running evaluation on the trained model..."
+$PYTHON_CMD emotion_net/evaluate.py \
+    --dataset_name "fer2013" \
+    --data_dir "$DATA_DIR" \
+    --model_path "$MODEL_DIR/best_model.pth" \
+    --architecture $ARCHITECTURE \
+    --image_size $IMAGE_SIZE \
+    --backbone $BACKBONE \
+    --embedding_size $EMBEDDING_SIZE \
+    --batch_size 32
+
+# Check exit status
+if [ $? -ne 0 ]; then
+    echo "Error: Evaluation phase failed!"
+    exit 1
+fi
+
+echo "Evaluation completed successfully!" 

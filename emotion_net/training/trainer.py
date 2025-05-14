@@ -174,7 +174,14 @@ class EmotionTrainer:
             loss_type=config.get('loss_type', 'cross_entropy'),
             focal_loss_gamma=config.get('focal_gamma', 2.0),
             scheduler_type=config.get('scheduler_type', 'one_cycle'),
-            dataset_name=config.get('dataset_name', None)
+            dataset_name=config.get('dataset_name', None),
+            weight_decay=config.get('weight_decay', 0.0001),
+            optimizer_type=config.get('optimizer', 'adam'),
+            warmup_epochs=config.get('warmup_epochs', 0),
+            use_class_weights=config.get('class_weights', False),
+            sad_class_weight=config.get('sad_class_weight', 1.0),
+            triplet_margin=config.get('triplet_margin', 0.3),
+            custom_loss_fn=config.get('custom_loss_fn', None)
         )
         
         # Initialize EMA if enabled
@@ -284,8 +291,8 @@ class EmotionTrainer:
                 
                 save_path = os.path.join(self.model_dir, 'best_model.pth')
                 save_model(
-                    self.model, self.optimizer, self.scheduler,
-                    epoch, val_metrics, save_path
+                    self.model, self.optimizer, epoch, save_path,
+                    scheduler=self.scheduler, best_metrics=val_metrics
                 )
 
                 if self.ema:
