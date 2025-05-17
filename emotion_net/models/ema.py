@@ -1,4 +1,4 @@
-"""Exponential Moving Average (EMA) implementation for model weights.
+﻿"""Exponential Moving Average (EMA) implementation for model weights.
 
 EMA is a common technique to improve model stability during training.
 """

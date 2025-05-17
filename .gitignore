@@ -1,7 +1,6 @@
 # Datasets
 dataset/
 extracted/
-models/
 
 # Python
 __pycache__/

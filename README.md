@@ -1,91 +1,133 @@
-# Advanced Emotion Recognition for FER2013
+# EmotionNet - Advanced Facial Emotion Recognition
 
-This repository contains a state-of-the-art implementation for facial emotion recognition on the FER2013 dataset, achieving close to 80% accuracy using advanced deep learning techniques.
+EmotionNet is a state-of-the-art facial emotion recognition system designed to accurately classify emotions from facial expressions. This implementation includes enhanced models, training pipelines, and stability improvements to outperform ResEmoteNet on the FER2013 dataset.
 
-## Model Architecture
+## Features
 
-Our implementation (`SOTAResEmote`) combines multiple state-of-the-art techniques from top-performing models:
+- **Advanced Model Architecture**: State-of-the-art ResEmoteNet architecture with CBAM attention, feature fusion, and GEM pooling.
+- **Robust Training**: Stabilized training loop with dynamic gradient clipping, NaN detection, and error handling.
+- **Multiple Backbones**: Support for various backbone networks including ResNet, ConvNeXt, and EfficientNet.
+- **Cross-Dataset Compatibility**: Works with FER2013 and RAFDB emotion datasets.
+- **Performance Optimizations**: Mixed precision training, memory-efficient backpropagation, and EMA model averaging.
 
-1. **Multi-stage Feature Fusion**: Combines features from different network depths for more comprehensive emotion understanding
-2. **Advanced Attention Mechanisms**:
-   - CBAM (Convolutional Block Attention Module) for feature refinement
-   - Facial Region Attention for focusing on important areas like eyes, mouth, etc.
-   - Anchor Attention for landmark-based feature enhancement
-3. **Transformer-based Refinement**: Vision transformer layers to capture global dependencies
-4. **GeM Pooling**: Generalized Mean Pooling for better feature aggregation
-5. **Auxiliary Loss**: Multi-stage supervision for better gradient flow
-6. **Robust Training**: Label smoothing, stochastic depth, and other regularization techniques
+## Installation
 
-## Requirements
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/EmotionNet.git
+   cd EmotionNet
+   ```
 
-- Python 3.8+
-- PyTorch 1.10+
-- torchvision
-- timm
-- sklearn
-- matplotlib
-- seaborn
+2. Install dependencies:
+   ```bash
+   pip install torch torchvision tqdm scikit-learn pandas opencv-python pillow matplotlib seaborn
+   ```
 
-Install requirements:
-```bash
-pip install -r requirements.txt
-```
+## Dataset Preparation
 
-## Dataset
+### FER2013 Dataset
 
-Download the FER2013 dataset from [Kaggle](https://www.kaggle.com/c/challenges-in-representation-learning-facial-expression-recognition-challenge/data) and extract it to a directory of your choice.
+The FER2013 dataset should be placed in the `dataset/fer2013/` directory. You can use either:
+
+1. CSV format (recommended):
+   - `train.csv` and `test.csv` files
+   - Or a single `icml_face_data.csv` file
+
+2. Extracted image directories:
+   - Organize images in class subdirectories: angry, disgust, fear, happy, neutral, sad, surprise
 
 ## Training
 
-To train the model on FER2013, run:
+### Training on Windows
+
+Run the PowerShell script:
+
+```powershell
+.\train_fer2013.ps1
+```
+
+### Training on Linux/Mac
+
+Run the bash script:
 
 ```bash
+chmod +x train_fer2013.sh
 ./train_fer2013.sh
 ```
 
-This script will:
-1. Set up appropriate hyperparameters
-2. Train a SOTAResEmote model with ResNet34 backbone
-3. Use advanced data augmentation techniques
-4. Automatically evaluate the model after training
+### Custom Training
 
-### Model Variants
-
-We provide three model variants:
-- `sota_resemote_small`: Based on ResNet18 (faster, but less accurate)
-- `sota_resemote_medium`: Based on ResNet34 (balanced performance)
-- `sota_resemote_large`: Based on ResNet50 (highest accuracy, but slower)
-
-To choose a specific variant, modify the `ARCHITECTURE` variable in the training script.
-
-## Evaluation
-
-To evaluate a trained model:
+You can also run training directly with custom parameters:
 
 ```bash
-python emotion_net/evaluate.py \
+python -m emotion_net.train \
     --dataset_name "fer2013" \
-    --data_dir "/path/to/fer2013" \
-    --model_path "/path/to/model/best_model.pth" \
-    --architecture "sota_resemote_medium" \
-    --image_size 256 \
-    --batch_size 32
+    --data_dir "./dataset/fer2013" \
+    --model_dir "./models/fer2013_custom" \
+    --architecture "sota_resemote_large" \
+    --backbones "convnext_tiny" \
+    --embedding_size 768 \
+    --learning_rate 0.000005 \
+    --batch_size 8 \
+    --num_epochs 100 \
+    --attention_type "cbam" \
+    --class_weights \
+    --sad_class_weight 1.5 \
+    --warmup_epochs 15
 ```
 
-This will compute accuracy, F1 score, precision, recall, and generate a confusion matrix.
+## Training Configuration
 
-## Results
+The improved model uses these key settings for optimal training:
 
-Our SOTAResEmote model achieves close to 80% accuracy on the FER2013 test set, comparable to the top-performing model (ResEmoteNet) on the [Papers with Code leaderboard](https://paperswithcode.com/sota/facial-expression-recognition-on-fer2013).
+- Learning rate: 0.000005 (ultra-low for stability)
+- Batch size: 8 (reduced for better gradient flow)
+- Optimizer: AdamW with 0.02 weight decay
+- Backbone: ConvNeXt Tiny (better performance than ResNet)
+- Architecture: sota_resemote_large with 768 embedding dimension
+- Loss: StableFocalLoss with 0.15 label smoothing
+- Regularization: 0.1 gradient clipping, 0.1 stochastic depth, 0.2 drop path
+- Scheduler: Cosine annealing with 15 warmup epochs
 
-## Acknowledgements
+## Model Evaluation
 
-This implementation includes techniques inspired by several state-of-the-art models:
-- ResEmoteNet
-- VGG-Segmentation
-- LHC-Net
-- ResMaskingNet
+Evaluate a trained model using:
+
+```bash
+python -m emotion_net.evaluate \
+    --dataset_name "fer2013" \
+    --data_dir "./dataset/fer2013" \
+    --model_path "./models/fer2013_improved/best_model.pth" \
+    --architecture "sota_resemote_large" \
+    --multi_crop_inference
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Training fails with "unable to open/read file" errors**:
+   - Make sure your dataset structure is correct
+   - Try the CSV-based loading instead of image directory loading
+   - Verify file permissions
+
+2. **NaN values in loss or gradients**:
+   - Reduce learning rate further (try 0.000001)
+   - Increase gradient clipping (try 0.05)
+   - Disable mixup/cutmix augmentations
+   - Check for corrupted images in the dataset
+
+3. **Out of memory errors**:
+   - Reduce batch size
+   - Use a smaller model (sota_resemote_medium or sota_resemote_small)
+   - Enable gradient checkpointing (enabled by default)
+   - Reduce image_size to 224 or 192
 
 ## License
 
-MIT 
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- FER2013 dataset: https://www.kaggle.com/c/challenges-in-representation-learning-facial-expression-recognition-challenge/data
+- RAFDB dataset: http://www.whdeng.cn/raf/model1.html 

@@ -1,4 +1,4 @@
-"""Evaluation script for the emotion recognition model."""
+﻿"""Evaluation script for the emotion recognition model."""
 
 import os
 import torch
@@ -61,16 +61,24 @@ def main():
     
     # Create data manager based on dataset name
     if args.dataset_name == 'fer2013':
-        data_manager = FER2013DataManager(data_dir=args.data_dir)
+        data_manager = FER2013DataManager(data_dir=args.data_dir, image_size=args.image_size)
     elif args.dataset_name == 'rafdb':
-        data_manager = RAFDBDataManager(data_dir=args.data_dir)
+        data_manager = RAFDBDataManager(data_dir=args.data_dir, image_size=args.image_size)
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset_name}")
     
     # Create datasets and data loaders
     print(f"Loading {args.dataset_name} dataset...")
-    train_dataset, val_dataset, _ = data_manager.create_datasets(image_size=args.image_size)
-    _, val_loader = data_manager.create_loaders(batch_size=args.batch_size, num_workers=args.num_workers)
+    train_dataset, val_dataset, test_dataset, _ = data_manager.get_datasets()
+    
+    # Create data loaders
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True
+    )
     
     # Get number of classes
     num_classes = len(train_dataset.classes)

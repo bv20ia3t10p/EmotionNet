@@ -1,4 +1,4 @@
-"""Training module for emotion recognition."""
+﻿"""Training module for emotion recognition."""
 
 from .trainer import EmotionTrainer
 from .model_manager import setup_training, calculate_class_weights, create_criterion, save_model

@@ -1,10 +1,10 @@
-"""Data handling utilities."""
+﻿"""Data module for emotion recognition"""
 
-from .augmentations import get_transforms
-from .parsers import parse_fer2013, parse_rafdb
 from .dataset import BaseEmotionDataset
 from .fer2013_manager import FER2013DataManager
 from .rafdb_manager import RAFDBDataManager
+from .augmentations import get_transforms
+from .parsers import parse_fer2013, parse_rafdb
 
 __all__ = [
     'get_transforms', 

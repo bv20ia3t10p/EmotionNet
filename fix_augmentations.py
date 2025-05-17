@@ -1,4 +1,16 @@
-"""Custom augmentations for facial emotion recognition."""
+#!/usr/bin/env python3
+"""Fix the augmentations.py file with proper encoding"""
+
+import os
+
+def fix_augmentations_file():
+    # Path to the file
+    filepath = "emotion_net/data/augmentations.py"
+    
+    print(f"Fixing {filepath}...")
+    
+    # Create a clean version of the file
+    clean_content = '''"""Custom augmentations for facial emotion recognition."""
 
 import numpy as np
 import torch
@@ -290,4 +302,17 @@ def get_transforms(image_size=224, augmentation_strength="standard", is_training
     if is_training:
         return get_training_transforms(image_size, augmentation_strength)
     else:
-        return get_validation_transforms(image_size)
+        return get_validation_transforms(image_size)'''
+    
+    # Write the clean content to the file
+    try:
+        with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(clean_content)
+        print(f"✅ Successfully fixed {filepath}")
+        return True
+    except Exception as e:
+        print(f"❌ Error fixing {filepath}: {e}")
+        return False
+
+if __name__ == "__main__":
+    fix_augmentations_file() 

@@ -1,4 +1,4 @@
-"""Visualization utilities for the emotion recognition model."""
+﻿"""Visualization utilities for the emotion recognition model."""
 
 import numpy as np
 import matplotlib.pyplot as plt

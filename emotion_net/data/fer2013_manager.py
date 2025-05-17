@@ -1,4 +1,4 @@
-"""Data Manager specific to FER2013 dataset."""
+﻿"""Data Manager specific to FER2013 dataset."""
 
 import os
 import numpy as np
@@ -114,6 +114,12 @@ class FER2013DataManager:
         train_csv = os.path.join(self.data_dir, 'train.csv')
         test_csv = os.path.join(self.data_dir, 'test.csv')
         full_csv = os.path.join(self.data_dir, 'icml_face_data.csv')
+        
+        # Print info about CSV files
+        print(f"Checking for CSV files:")
+        print(f"  train.csv exists: {os.path.exists(train_csv)}")
+        print(f"  test.csv exists: {os.path.exists(test_csv)}")
+        print(f"  icml_face_data.csv exists: {os.path.exists(full_csv)}")
         
         # Initialize dataframes
         train_df = None
@@ -324,124 +330,105 @@ class FER2013DataManager:
         return train_dataset, val_dataset, test_dataset, train_labels
     
     def _csv_to_images(self, df, output_dir, is_train=True):
-        """Extract images from DataFrame and save to output directory with enhanced preprocessing."""
-        from PIL import Image, ImageOps, ImageEnhance
-        import numpy as np
-        import os
+        """Convert pixels from CSV to image files for dataset loading.
         
-        # Ensure output_dir is absolute
-        output_dir = os.path.abspath(output_dir)
-        print(f"Extracting {len(df)} images to {output_dir}")
+        Args:
+            df: Dataframe with pixel data
+            output_dir: Directory to save the images
+            is_train: Whether this is for training data
+        """
+        print(f"Converting CSV data to images in {output_dir}...")
         
-        # Find column names
-        pixel_col = None
-        emotion_col = None
+        # First verify the output directory exists
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+            print(f"Created output directory: {output_dir}")
         
-        if 'pixels' in df.columns:
-            pixel_col = 'pixels'
-        elif 'Pixels' in df.columns:
-            pixel_col = 'Pixels'
-        else:
-            print(f"Error: No pixel column found in DataFrame. Columns: {df.columns.tolist()}")
-            return
-            
-        if 'emotion' in df.columns:
-            emotion_col = 'emotion'
-        elif 'Emotion' in df.columns:
-            emotion_col = 'Emotion'
-        else:
-            print(f"Warning: No emotion column found. Using neutral class for all images.")
+        # Ensure the dataframe contains the required columns
+        required_columns = ['pixels']
+        if 'emotion' not in df.columns and is_train:
+            print(f"WARNING: 'emotion' column not found in dataframe. Assuming test data without labels.")
         
-        # Process rows
-        count = 0
+        for col in required_columns:
+            if col not in df.columns:
+                raise ValueError(f"Required column '{col}' not found in dataframe.")
         
-        for idx, row in df.iterrows():
+        # Only process a subset for debugging
+        # df = df.sample(n=min(500, len(df))).reset_index(drop=True)
+        
+        # Process dataframe with progress bar
+        import tqdm
+        processed = 0
+        errors = 0
+        
+        for idx, row in tqdm.tqdm(df.iterrows(), total=len(df), desc="Processing images"):
             try:
-                # Get emotion label
-                if emotion_col:
-                    emotion_idx = int(row[emotion_col])
-                    if 0 <= emotion_idx < len(self.all_classes):
-                        emotion_name = self.all_classes[emotion_idx]
-                    else:
-                        emotion_name = 'neutral'  # Default if out of range
-                else:
-                    emotion_name = 'neutral'  # Default if no emotion column
-                    emotion_idx = 6  # Neutral index
+                # Get emotion label if available
+                emotion_idx = row.get('emotion', 0)  # Default to neutral (0) if not available
                 
-                # Parse pixels
-                pixel_str = row[pixel_col]
-                if isinstance(pixel_str, str):
-                    if ' ' in pixel_str:
-                        pixels = np.array([int(p) for p in pixel_str.split()], dtype=np.float32)
-                    else:
-                        pixels = np.array([int(p) for p in pixel_str.split(',')], dtype=np.float32)
-                else:
-                    pixels = np.array(pixel_str, dtype=np.float32)
+                # Skip invalid emotions
+                if emotion_idx >= len(EMOTIONS):
+                    print(f"Invalid emotion index: {emotion_idx}. Skipping.")
+                    continue
                 
-                # Check pixel count
-                expected_size = 48 * 48
-                if len(pixels) != expected_size:
-                    if len(pixels) > expected_size:
-                        pixels = pixels[:expected_size]
-                    else:
-                        continue  # Skip if not enough pixels
+                # Get the emotion name 
+                emotion_name = EMOTIONS.get(emotion_idx, 'unknown')
                 
-                # Normalize pixel values to improve learning
-                pixels = pixels / 255.0
-                
-                # Apply advanced image processing
-                # 1. Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-                pixels_img = (pixels * 255).astype(np.uint8).reshape(48, 48)
-                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-                pixels_img = clahe.apply(pixels_img)
-                pixels = pixels_img.astype(np.float32) / 255.0
-                
-                # 2. Apply improved contrast normalization
-                pixels_mean = np.mean(pixels)
-                pixels_std = np.std(pixels)
-                if pixels_std > 0:
-                    pixels = (pixels - pixels_mean) / (pixels_std + 1e-7)
-                    # Scale back to 0-1 range approximately
-                    pixels = (pixels * 0.25) + 0.5
-                    # Clip to ensure we're in 0-1 range
-                    pixels = np.clip(pixels, 0, 1)
-                
-                # Standardize using FER2013 dataset statistics
-                pixels = (pixels - self.fer_mean) / (self.fer_std + 1e-7)
-                pixels = np.clip(pixels, -2.5, 2.5)  # Clip outliers
-                
-                # Rescale to 0-1 for saving as image
-                pixels_normalized = (pixels - pixels.min()) / (pixels.max() - pixels.min() + 1e-7)
-                
-                # Convert to 0-255 range for saving
-                pixels_to_save = (pixels_normalized * 255).astype(np.uint8)
-                
-                # Reshape and create image
-                img = pixels_to_save.reshape(48, 48)
-                pil_img = Image.fromarray(img)
-                
-                # Save to appropriate directory
+                # Create emotion directory if needed
                 emotion_dir = os.path.join(output_dir, emotion_name)
                 os.makedirs(emotion_dir, exist_ok=True)
-                img_path = os.path.join(emotion_dir, f"{idx}.png")
                 
-                # Ensure the image path is absolute
-                img_path = os.path.abspath(img_path)
+                # Create unique filename
+                if is_train:
+                    prefix = "Training"
+                else:
+                    prefix = "Test"
+                filename = f"{prefix}_{np.random.randint(0, 100000000)}.jpg"
+                filepath = os.path.join(emotion_dir, filename)
                 
-                pil_img.save(img_path)
+                # Ensure we're creating absolute paths
+                filepath = os.path.abspath(filepath)
                 
-                # Verify the image was saved correctly
-                if not os.path.exists(img_path):
-                    print(f"Warning: Failed to save image at {img_path}")
+                # Convert string of pixels to numpy array
+                pixels = row['pixels']
+                if isinstance(pixels, str):
+                    # Convert space-separated string to numpy array
+                    pixels = np.array([int(p) for p in pixels.split()], dtype=np.uint8)
                 
-                count += 1
-                if count % 1000 == 0:
-                    print(f"Saved {count} images")
+                # Check if we have the expected pixel count for 48x48 images
+                if len(pixels) != 48*48:
+                    # Try to handle different formats like comma-separated
+                    try:
+                        pixels = np.array([int(p) for p in pixels.split(',')], dtype=np.uint8)
+                        if len(pixels) != 48*48:
+                            print(f"Unexpected pixel count: {len(pixels)}. Skipping.")
+                            continue
+                    except Exception as e:
+                        print(f"Error processing pixels: {e}. Skipping.")
+                        continue
+                
+                # Reshape pixels to 48x48 image
+                img = pixels.reshape(48, 48)
+                
+                # Save as 8-bit grayscale image
+                cv2.imwrite(filepath, img)
+                
+                # Verify the image was saved
+                if not os.path.exists(filepath):
+                    print(f"Failed to save image to {filepath}")
+                    errors += 1
+                else:
+                    processed += 1
+                
             except Exception as e:
                 print(f"Error processing row {idx}: {e}")
+                errors += 1
         
-        print(f"Successfully saved {count} images to {output_dir}")
+        print(f"Successfully processed {processed} images with {errors} errors.")
         
+        # Return the total number of successfully processed images
+        return processed
+    
     def _load_from_directory(self):
         """Load FER2013 dataset from directory structure with image files."""
         train_dataset, val_dataset, test_dataset = None, None, None
@@ -601,7 +588,14 @@ class BaseFER2013Dataset(BaseEmotionDataset):
         self.mode = mode
         self.image_size = image_size
         self.dataset_name = dataset_name
-        self.fer_mean = fer_mean
+        
+        # Set ImageNet normalization values for models pre-trained on ImageNet
+        # These values are standard for ResNet, ResNeXt, and other ImageNet models
+        self.imagenet_mean = [0.485, 0.456, 0.406]
+        self.imagenet_std = [0.229, 0.224, 0.225]
+        
+        # Keep FER-specific mean/std for backward compatibility
+        self.fer_mean = fer_mean  
         self.fer_std = fer_std
         
         # Determine if we're dealing with PIL images or file paths
@@ -639,10 +633,10 @@ class BaseFER2013Dataset(BaseEmotionDataset):
         import albumentations as A
         from albumentations.pytorch import ToTensorV2
         
-        # Standard normalization using FER2013 statistics
+        # Use ImageNet normalization for models pretrained on ImageNet (ResNet, ResNeXt, etc.)
         normalize = A.Normalize(
-            mean=[self.fer_mean, self.fer_mean, self.fer_mean], 
-            std=[self.fer_std, self.fer_std, self.fer_std],
+            mean=self.imagenet_mean,  # ImageNet means
+            std=self.imagenet_std,    # ImageNet stds
             max_pixel_value=1.0
         )
         

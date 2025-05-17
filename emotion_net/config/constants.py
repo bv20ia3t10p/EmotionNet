@@ -1,4 +1,4 @@
-"""Constants and configuration values for EmotionNet."""
+﻿"""Constants and configuration values for EmotionNet."""
 
 # Image preprocessing constants
 IMAGE_MEAN = [0.485, 0.456, 0.406]  # ImageNet mean

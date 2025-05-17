@@ -1,4 +1,4 @@
-"""Main training script for the emotion recognition model."""
+﻿"""Main training script for the emotion recognition model."""
 
 import os
 import torch
@@ -214,11 +214,13 @@ class EmotionTrainer:
         )
         
         # Run validation
-        metrics = validate(
+        val_loss, metrics = validate(
             self.model, loader, self.criterion,
             self.device, dataset.classes
         )
         
+        # Add loss to metrics
+        metrics['loss'] = val_loss
         return metrics
     
     def train(self):
@@ -244,6 +246,11 @@ class EmotionTrainer:
         for epoch in range(num_epochs):
             print(f"\nEpoch {epoch + 1}/{num_epochs}")
             
+            # Update epoch for adaptive loss if used
+            if hasattr(self.criterion, 'update_epoch'):
+                self.criterion.update_epoch(epoch)
+                print(f"Updated adaptive loss weights for epoch {epoch + 1}")
+            
             # Training phase
             train_metrics = train_epoch(
                 self.model, self.train_loader, self.criterion,
@@ -256,10 +263,13 @@ class EmotionTrainer:
             if self.ema:
                 self.ema.apply_shadow()
             
-            val_metrics = validate(
+            val_loss, val_metrics = validate(
                 self.model, self.val_loader, self.criterion,
                 self.device, self.train_dataset.classes
             )
+            
+            # Add loss to validation metrics
+            val_metrics['loss'] = val_loss
 
             if self.ema:
                 self.ema.restore()
@@ -270,18 +280,18 @@ class EmotionTrainer:
 
             # Store metrics
             self.history['train_loss'].append(train_metrics['loss'])
-            self.history['train_f1'].append(train_metrics['f1'])
+            self.history['train_f1'].append(train_metrics.get('f1', train_metrics.get('macro_f1', 0.0)))  # Use either f1 or macro_f1
             self.history['val_loss'].append(val_metrics['loss'])
-            self.history['val_f1'].append(val_metrics['f1'])
+            self.history['val_f1'].append(val_metrics.get('f1', val_metrics.get('macro_f1', 0.0)))  # Use either f1 or macro_f1
             
             # Print epoch metrics
             print(f"\nEpoch {epoch + 1} Metrics:")
-            print(f"Train Loss: {train_metrics['loss']:.4f}, F1: {train_metrics['f1']:.4f}")
-            print(f"Val Loss: {val_metrics['loss']:.4f}, F1: {val_metrics['f1']:.4f}")
+            print(f"Train Loss: {train_metrics['loss']:.4f}, F1: {train_metrics.get('f1', train_metrics.get('macro_f1', 0.0)):.4f}")
+            print(f"Val Loss: {val_loss:.4f}, F1: {val_metrics.get('f1', val_metrics.get('macro_f1', 0.0)):.4f}")
             
-            # Save best model
-            if val_metrics['f1'] > self.best_val_f1:
-                self.best_val_f1 = val_metrics['f1']
+            # Save best model based on macro F1
+            if val_metrics.get('f1', val_metrics.get('macro_f1', 0.0)) > self.best_val_f1:
+                self.best_val_f1 = val_metrics.get('f1', val_metrics.get('macro_f1', 0.0))
                 self.best_epoch = epoch
                 self.patience_counter = 0
                 

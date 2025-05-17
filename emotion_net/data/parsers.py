@@ -1,4 +1,4 @@
-"""Data parsing functions for different emotion datasets."""
+﻿"""Data parsing functions for different emotion datasets."""
 
 import os
 from emotion_net.config.constants import EMOTIONS # FER2013 specific

@@ -1,4 +1,4 @@
-"""Placeholder for the ensemble model.
+﻿"""Placeholder for the ensemble model.
 
 This is a simplified implementation to avoid import errors.
 """

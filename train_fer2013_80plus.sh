@@ -3,49 +3,42 @@
 # Exit on any error
 set -e
 
-echo "Starting FER2013 training with advanced optimizations for 80%+ accuracy..."
+echo "Starting FER2013 high-accuracy training (80%+ target)..."
 
-# --- Configuration ---
-DATA_DIR="./dataset/fer2013"          # Path to FER2013 data directory with CSV files
-MODEL_DIR="./models/fer2013_80acc"    # Model directory for high-accuracy model
+# --- Configuration for 80%+ Accuracy ---
+DATA_DIR="./dataset/fer2013"          # Path to original FER2013 data directory with CSV files
+MODEL_DIR="./models/fer2013_80plus"    # Model directory for high-accuracy model
 
-# Enhanced configuration for 80% accuracy with numerical stability improvements
-BATCH_SIZE=32                        # Larger batch size for more stable gradients
-EPOCHS=250                           # More epochs to find better minima
-LEARNING_RATE=0.00001                # Even lower learning rate for stability (was 0.00005)
-IMAGE_SIZE=224                       # Standard resolution
-BACKBONE="vit_base_patch16_224"       # Vision Transformer works well for faces
-LABEL_SMOOTHING=0.1                  # Reduced label smoothing for stability
-MIXUP_ALPHA=0.0                      # Disable mixup until model learns better
-CUTMIX_ALPHA=0.0                     # Disable cutmix
-DROP_PATH_RATE=0.0                   # Disable stochastic depth initially
-SCHEDULER_TYPE="cosine_annealing"    # Valid scheduler option
+# Hyper-optimized parameters for 80%+ accuracy
+BATCH_SIZE=32                         # Optimal batch size for stable gradients
+EPOCHS=300                            # More training time for better convergence
+LEARNING_RATE=0.00005                 # Well-tuned learning rate
+IMAGE_SIZE=224                        # Standard resolution
+BACKBONE="swin_tiny_patch4_window7_224" # Transformer backbone works better for faces
+LABEL_SMOOTHING=0.1                  # Prevent overconfidence
+SCHEDULER_TYPE="cosine_annealing"     # Cosine annealing scheduler
 NUM_WORKERS=4                        # Parallel data loading
-PATIENCE=50                          # More patience for early stopping
+PATIENCE=40                          # Longer patience for finding global minimum
 VAL_SPLIT_RATIO=0.15                 # Balanced validation split
-WEIGHT_DECAY=0.0001                  # Lower weight decay for stability
+WEIGHT_DECAY=0.02                    # Optimal weight decay for transformer models
 OPTIMIZER="adamw"                    # Best optimizer for transformer
-WARMUP_EPOCHS=10                     # More warmup epochs helps stabilize transformer training
-GRADIENT_CLIP=0.1                    # Reduced gradient clip to prevent NaN (was 0.5)
+WARMUP_EPOCHS=10                     # Warmup helps stabilize transformer training
+GRADIENT_CLIP=1.0                    # Higher gradient clip for stability
 ARCHITECTURE="enhanced_resemote"     # Our custom enhanced architecture
-EMBEDDING_SIZE=512                   # Smaller embedding size
-RANDOM_ERASE=0.0                     # Disable random erasing initially
-SAD_CLASS_WEIGHT=2.0                 # Lower class weighting
-NEUTRAL_CLASS_WEIGHT=1.5             # Lower class weighting
-FEAR_CLASS_WEIGHT=2.0                # Lower class weighting
-DISGUST_CLASS_WEIGHT=3.0             # Lower class weighting
-ACCUMULATION_STEPS=1                 # No gradient accumulation
-STOCHASTIC_DEPTH=0.0                 # No stochastic depth
-ATTENTION_TYPE="cbam"                # Use CBAM attention
-AUGMENTATION_STRENGTH="standard"     # Use standard augmentations to prevent instability
-EMA_DECAY=0.999                      # EMA decay
-CENTER_LOSS_WEIGHT=0.001             # Reduced center loss weight significantly (was 0.005)
-TRIPLET_LOSS_WEIGHT=0.01             # Reduced triplet loss weight significantly (was 0.05)
-LOSS_TYPE="cross_entropy"            # Start with simple loss for stability
-AMP_SCALE=64                         # Smaller loss scale for mixed precision
-USE_TTA=1                            # Enable test-time augmentation
-SAVE_FREQUENCY=10                    # Save every 10 epochs
-STABILIZE_NORM=1                     # Add epsilon to norm calculations
+EMBEDDING_SIZE=768                   # Optimal embedding size for transformers
+CLASS_WEIGHTS=1                      # Use class balancing
+GEM_POOLING=1                        # Use GEM pooling
+LOSS_TYPE="adaptive"                 # Use adaptive emotion loss for 80%+ accuracy
+USE_EMA=1                            # Use exponential moving average
+EMA_DECAY=0.998                      # EMA decay parameter
+CENTER_LOSS_WEIGHT=0.005             # Center loss weight for better feature separation
+TRIPLET_LOSS_WEIGHT=0.01             # Low triplet loss weight
+AMP_SCALE=128                        # AMP scale for mixed precision
+USE_TTA=1                            # Use test-time augmentation
+DROP_PATH=0.1                        # Drop path rate for regularization
+FOCAL_GAMMA=2.0                      # Focal loss gamma parameter
+AUGMENTATION_STRENGTH="strong"       # Use strong augmentations for better generalization
+SAVE_FREQUENCY=5                     # Save every 5 epochs
 
 # Create model directory if it doesn't exist
 mkdir -p "$MODEL_DIR"
@@ -75,17 +68,16 @@ if [ ! -f "$DATA_DIR/train.csv" ] && [ ! -f "$DATA_DIR/icml_face_data.csv" ]; th
 fi
 
 # --- Run Training ---
-echo "Running high-performance training with enhanced architecture and optimizations..."
+echo "Running high-performance training with optimized hyperparameters for 80%+ accuracy..."
 # Add current directory to PYTHONPATH to help find the emotion_net module
 export PYTHONPATH="$PYTHONPATH:$(pwd)"
 
 # Print debug info
 echo "DEBUG: Using ARCHITECTURE=$ARCHITECTURE with BACKBONE=$BACKBONE"
-echo "DEBUG: Using EMBEDDING_SIZE=$EMBEDDING_SIZE with DROP_PATH_RATE=$DROP_PATH_RATE"
+echo "DEBUG: Using EMBEDDING_SIZE=$EMBEDDING_SIZE"
 echo "DEBUG: Using LEARNING_RATE=$LEARNING_RATE with WEIGHT_DECAY=$WEIGHT_DECAY"
-echo "DEBUG: Using class weights: SAD=$SAD_CLASS_WEIGHT, NEUTRAL=$NEUTRAL_CLASS_WEIGHT, FEAR=$FEAR_CLASS_WEIGHT, DISGUST=$DISGUST_CLASS_WEIGHT"
-echo "DEBUG: Using LOSS_TYPE=$LOSS_TYPE with CENTER_LOSS_WEIGHT=$CENTER_LOSS_WEIGHT and TRIPLET_LOSS_WEIGHT=$TRIPLET_LOSS_WEIGHT"
-echo "DEBUG: Using AUGMENTATION_STRENGTH=$AUGMENTATION_STRENGTH with MIXUP_ALPHA=$MIXUP_ALPHA"
+echo "DEBUG: Using LOSS_TYPE=$LOSS_TYPE with optimized parameters"
+echo "DEBUG: Using AUGMENTATION_STRENGTH=$AUGMENTATION_STRENGTH"
 
 # Redirect output to log file for debugging
 LOG_FILE="$MODEL_DIR/training_log.txt"
@@ -103,9 +95,8 @@ $PYTHON_CMD -m emotion_net.train \
     --backbones $BACKBONE \
     --loss_type "$LOSS_TYPE" \
     --label_smoothing $LABEL_SMOOTHING \
-    --mixup_alpha $MIXUP_ALPHA \
-    --cutmix_alpha $CUTMIX_ALPHA \
-    --drop_path_rate $DROP_PATH_RATE \
+    --focal_gamma $FOCAL_GAMMA \
+    --drop_path_rate $DROP_PATH \
     --scheduler_type "$SCHEDULER_TYPE" \
     --num_workers $NUM_WORKERS \
     --patience $PATIENCE \
@@ -116,29 +107,21 @@ $PYTHON_CMD -m emotion_net.train \
     --gradient_clip $GRADIENT_CLIP \
     --architecture $ARCHITECTURE \
     --embedding_size $EMBEDDING_SIZE \
-    --attention_type "$ATTENTION_TYPE" \
+    --attention_type "cbam" \
     --class_weights \
     --gem_pooling \
     --pretrained \
-    --random_erase $RANDOM_ERASE \
-    --sad_class_weight $SAD_CLASS_WEIGHT \
-    --neutral_class_weight $NEUTRAL_CLASS_WEIGHT \
-    --fear_class_weight $FEAR_CLASS_WEIGHT \
-    --disgust_class_weight $DISGUST_CLASS_WEIGHT \
-    --stochastic_depth $STOCHASTIC_DEPTH \
-    --seed 42 \
-    --gradient_accumulation_steps $ACCUMULATION_STEPS \
-    --augmentation_strength $AUGMENTATION_STRENGTH \
     --use_ema \
     --ema_decay $EMA_DECAY \
-    --fix_pool_keys \
     --use_amp \
     --center_loss_weight $CENTER_LOSS_WEIGHT \
     --triplet_loss_weight $TRIPLET_LOSS_WEIGHT \
     --amp_scale $AMP_SCALE \
-    --save_ckpt_freq $SAVE_FREQUENCY \
     --use_tta $USE_TTA \
-    --stabilize_norm $STABILIZE_NORM \
+    --stabilize_norm 1 \
+    --channels_last \
+    --augmentation_strength "$AUGMENTATION_STRENGTH" \
+    --save_ckpt_freq $SAVE_FREQUENCY \
     2>&1 | tee "$LOG_FILE"
 
 # Check exit status of training
@@ -152,11 +135,10 @@ echo "Training completed successfully!"
 echo "Model saved in $MODEL_DIR"
 echo "Log saved in $LOG_FILE"
 
-# --- Run evaluation on the trained model with test-time augmentation ---
+# --- Run evaluation with test-time augmentation ---
 echo "Running evaluation with test-time augmentation on the trained model..."
 EVAL_LOG_FILE="$MODEL_DIR/evaluation_log.txt"
 
-# Fixed evaluation command with parameters compatible with the enhanced_resemote architecture
 $PYTHON_CMD -m emotion_net.evaluate \
     --dataset_name "fer2013" \
     --data_dir "$DATA_DIR" \
@@ -165,6 +147,7 @@ $PYTHON_CMD -m emotion_net.evaluate \
     --image_size $IMAGE_SIZE \
     --backbone $BACKBONE \
     --embedding_size $EMBEDDING_SIZE \
+    --use_tta \
     2>&1 | tee "$EVAL_LOG_FILE"
 
 # Check exit status of evaluation

@@ -1,4 +1,4 @@
-"""Prediction script for the emotion recognition model."""
+﻿"""Prediction script for the emotion recognition model."""
 
 import cv2
 import torch

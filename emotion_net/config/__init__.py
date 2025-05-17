@@ -1,4 +1,4 @@
-"""Configuration package for EmotionNet."""
+﻿"""Configuration package for EmotionNet."""
 
 from emotion_net.config.constants import (
     IMAGE_MEAN, IMAGE_STD, EMOTIONS,
