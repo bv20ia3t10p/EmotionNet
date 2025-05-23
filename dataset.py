@@ -7,6 +7,10 @@ from PIL import Image
 import torchvision.transforms as transforms
 from sklearn.model_selection import train_test_split
 import albumentations as A
+from torchvision import transforms
+from typing import Optional, Tuple, List
+from torchvision.transforms import functional as F
+import random
 
 # Emotion labels mapping for FER2013
 EMOTION_MAP = {
@@ -18,6 +22,78 @@ EMOTION_MAP = {
     5: "Surprise",
     6: "Neutral"
 }
+
+# Advanced augmentation imports
+try:
+    from torchvision.transforms import RandAugment, AugMix
+    HAS_ADVANCED_AUGMENT = True
+except ImportError:
+    HAS_ADVANCED_AUGMENT = False
+
+class MixUp:
+    """MixUp augmentation for better generalization"""
+    def __init__(self, alpha=0.2):
+        self.alpha = alpha
+    
+    def __call__(self, images, labels):
+        batch_size = images.size(0)
+        if batch_size < 2:
+            return images, labels
+        
+        # Generate mix ratio
+        lam = np.random.beta(self.alpha, self.alpha) if self.alpha > 0 else 1
+        
+        # Random shuffle for mixing
+        index = torch.randperm(batch_size).to(images.device)
+        
+        # Mix images
+        mixed_images = lam * images + (1 - lam) * images[index]
+        
+        # Return mixed images and both sets of labels with lambda
+        return mixed_images, labels, labels[index], lam
+
+class CutMix:
+    """CutMix augmentation for better localization"""
+    def __init__(self, alpha=1.0):
+        self.alpha = alpha
+    
+    def __call__(self, images, labels):
+        batch_size = images.size(0)
+        if batch_size < 2:
+            return images, labels
+        
+        # Generate mix ratio
+        lam = np.random.beta(self.alpha, self.alpha) if self.alpha > 0 else 1
+        
+        # Random shuffle for mixing
+        index = torch.randperm(batch_size).to(images.device)
+        
+        # Get image dimensions
+        _, _, H, W = images.size()
+        
+        # Generate random box
+        cut_rat = np.sqrt(1. - lam)
+        cut_w = int(W * cut_rat)
+        cut_h = int(H * cut_rat)
+        
+        # Uniform sampling of center
+        cx = np.random.randint(W)
+        cy = np.random.randint(H)
+        
+        # Box boundaries
+        bbx1 = np.clip(cx - cut_w // 2, 0, W)
+        bby1 = np.clip(cy - cut_h // 2, 0, H)
+        bbx2 = np.clip(cx + cut_w // 2, 0, W)
+        bby2 = np.clip(cy + cut_h // 2, 0, H)
+        
+        # Apply CutMix
+        images_clone = images.clone()
+        images_clone[:, :, bby1:bby2, bbx1:bbx2] = images[index, :, bby1:bby2, bbx1:bbx2]
+        
+        # Adjust lambda based on actual box area
+        lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (W * H))
+        
+        return images_clone, labels, labels[index], lam
 
 class FER2013Dataset(Dataset):
     def __init__(self, csv_file, root_dir, transform=None, mode='train', use_extra_augmentation=True):
@@ -310,4 +386,116 @@ def convert_grayscale_to_rgb(tensor):
     Returns:
         torch.Tensor: RGB tensor with shape [batch_size, 3, height, width]
     """
-    return tensor.repeat(1, 3, 1, 1) 
+    return tensor.repeat(1, 3, 1, 1)
+
+def get_advanced_transforms(img_size=224, is_train=True):
+    """
+    Get advanced data augmentation transforms
+    """
+    if is_train:
+        transform_list = [
+            transforms.Resize((img_size + 32, img_size + 32)),  # Resize slightly larger
+            transforms.RandomCrop(img_size),  # Random crop to target size
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomRotation(degrees=15),
+        ]
+        
+        # Add RandAugment if available
+        if HAS_ADVANCED_AUGMENT:
+            transform_list.append(RandAugment(num_ops=2, magnitude=9))
+        else:
+            # Fallback to standard augmentations
+            transform_list.extend([
+                transforms.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+                transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1),
+                transforms.RandomGrayscale(p=0.1),
+            ])
+        
+        # Add random erasing for regularization
+        transform_list.extend([
+            transforms.ToTensor(),
+            transforms.RandomErasing(p=0.2, scale=(0.02, 0.15)),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+    else:
+        # Validation/Test transforms
+        transform_list = [
+            transforms.Resize((img_size, img_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ]
+    
+    return transforms.Compose(transform_list)
+
+def get_data_loaders(train_csv, val_csv, test_csv, img_dir, batch_size=32, img_size=224, 
+                     num_workers=4, use_weighted_sampler=True, use_mixup=False, use_cutmix=False):
+    """
+    Create data loaders with optional weighted sampling and advanced augmentations
+    """
+    # Create transforms
+    train_transform = get_advanced_transforms(img_size, is_train=True)
+    val_transform = get_advanced_transforms(img_size, is_train=False)
+    
+    # Create datasets
+    train_dataset = FER2013Dataset(
+        csv_file=train_csv, 
+        root_dir=img_dir, 
+        transform=train_transform, 
+        mode='train',
+        use_extra_augmentation=True
+    )
+    
+    val_dataset = FER2013Dataset(
+        csv_file=val_csv, 
+        root_dir=img_dir, 
+        transform=val_transform, 
+        mode='val',
+        use_extra_augmentation=False
+    )
+    
+    test_dataset = FER2013Dataset(
+        csv_file=test_csv, 
+        root_dir=img_dir, 
+        transform=val_transform, 
+        mode='test',
+        use_extra_augmentation=False
+    )
+    
+    # Create weighted sampler for training if requested
+    train_sampler = None
+    if use_weighted_sampler:
+        sample_weights = get_balanced_sampler(train_dataset)
+        train_sampler = WeightedRandomSampler(
+            weights=sample_weights,
+            num_samples=len(sample_weights),
+            replacement=True
+        )
+    
+    # Create data loaders
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=batch_size,
+        shuffle=(train_sampler is None),  # Don't shuffle if using sampler
+        sampler=train_sampler,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True  # Drop last batch for MixUp/CutMix consistency
+    )
+    
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True
+    )
+    
+    test_loader = DataLoader(
+        test_dataset, 
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True
+    )
+    
+    return train_loader, val_loader, test_loader 
