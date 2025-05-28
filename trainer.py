@@ -44,11 +44,20 @@ class SOTATrainer:
     
     def _setup_scheduler(self) -> optim.lr_scheduler._LRScheduler:
         """Setup learning rate scheduler."""
-        return optim.lr_scheduler.StepLR(
-            self.optimizer,
-            step_size=self.config['step_size'],
-            gamma=self.config['gamma']
-        )
+        if self.config.get('lr_scheduler') == 'cosine_warm_restarts':
+            return optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                self.optimizer,
+                T_0=self.config.get('T_0', 15),
+                T_mult=self.config.get('T_mult', 2),
+                eta_min=self.config.get('eta_min', 0.0001)
+            )
+        else:
+            # Fallback to step scheduler
+            return optim.lr_scheduler.StepLR(
+                self.optimizer,
+                step_size=self.config['step_size'],
+                gamma=self.config['gamma']
+            )
     
     def _setup_loss(self) -> nn.Module:
         """Setup focal loss with class weights."""
@@ -60,31 +69,55 @@ class SOTATrainer:
         )
     
     def train_epoch(self, train_loader) -> Dict[str, Any]:
-        """Train for one epoch."""
+        """Train for one epoch with MixUp/CutMix support."""
         self.model.train()
         total_loss = 0.0
         all_preds = []
         all_targets = []
         
+        # Import augmentation classes
+        from dataset import MixUp, CutMix
+        mixup = MixUp(alpha=self.config.get('mixup_alpha', 0.0))
+        cutmix = CutMix(alpha=self.config.get('cutmix_alpha', 0.0))
+        
         pbar = tqdm(train_loader, desc='Training')
         for inputs, targets in pbar:
             inputs, targets = inputs.to(self.device), targets.to(self.device)
             
-            # Forward pass
+            # Apply MixUp or CutMix randomly
+            use_mixup = self.config.get('mixup_alpha', 0) > 0 and torch.rand(1) < 0.3
+            use_cutmix = self.config.get('cutmix_alpha', 0) > 0 and torch.rand(1) < 0.3
+            
             self.optimizer.zero_grad()
-            outputs = self.model(inputs)
-            loss = self.criterion(outputs, targets)
+            
+            if use_mixup and not use_cutmix:
+                inputs, targets_a, targets_b, lam = mixup(inputs, targets)
+                outputs = self.model(inputs)
+                loss = lam * self.criterion(outputs, targets_a) + (1 - lam) * self.criterion(outputs, targets_b)
+            elif use_cutmix and not use_mixup:
+                inputs, targets_a, targets_b, lam = cutmix(inputs, targets)
+                outputs = self.model(inputs)
+                loss = lam * self.criterion(outputs, targets_a) + (1 - lam) * self.criterion(outputs, targets_b)
+            else:
+                # Standard training
+                outputs = self.model(inputs)
+                loss = self.criterion(outputs, targets)
             
             # Backward pass
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config['grad_clip'])
             self.optimizer.step()
             
-            # Track metrics
+            # Track metrics (use original targets for MixUp/CutMix)
             total_loss += loss.item()
             _, predicted = outputs.max(1)
-            all_preds.extend(predicted.cpu().numpy())
-            all_targets.extend(targets.cpu().numpy())
+            if use_mixup or use_cutmix:
+                # For mixed samples, use the dominant label
+                all_preds.extend(predicted.cpu().numpy())
+                all_targets.extend(targets_a.cpu().numpy() if torch.rand(1) < lam else targets_b.cpu().numpy())
+            else:
+                all_preds.extend(predicted.cpu().numpy())
+                all_targets.extend(targets.cpu().numpy())
             
             # Update progress
             pbar.set_postfix({

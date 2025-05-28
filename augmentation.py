@@ -239,15 +239,15 @@ class EnhancedAntiOverfittingAugmentation(nn.Module):
         # Grid mask for structured occlusion
         self.grid_mask = GridMask(d_range=(8, 32), r=0.6, p=0.3)
         
-        # Class-specific augmentation probabilities for class imbalance (UPDATED for Angry/Neutral fix)
+        # Enhanced class-specific augmentation probabilities (TARGETED FIXES)
         self.class_aug_probs = {
-            0: 0.95, # Angry - DRAMATICALLY INCREASED (was 0.9) - complete failure
-            1: 0.2,  # Disgust - DRAMATICALLY REDUCED (was 0.4) - performing too well, confusing with angry
-            2: 0.8,  # Fear - REDUCED (was 0.95) - moderate performance
-            3: 0.7,  # Happy - REDUCED (was 0.85) - good performance
-            4: 0.3,  # Sad - DRAMATICALLY REDUCED (was 0.95) - too dominant, confusing other classes
-            5: 0.7,  # Surprise - REDUCED (was 0.85) - good performance
-            6: 0.95  # Neutral - DRAMATICALLY INCREASED (was 0.8) - complete failure
+            0: 0.9,  # Angry - INCREASED further (confused with Neutral, needs more aug)
+            1: 0.05, # Disgust - MINIMAL (performing excellently, reduce overfitting)
+            2: 0.95, # Fear - MAXIMUM (worst performer, needs aggressive augmentation)
+            3: 0.2,  # Happy - REDUCED (performing well, minimal aug needed)
+            4: 0.9,  # Sad - INCREASED (second worst, confused with Angry/Fear)
+            5: 0.15, # Surprise - MINIMAL (performing well)
+            6: 0.85  # Neutral - HIGH (poor precision, confused with multiple classes)
         }
         
     def apply_geometric_aug(self, x):
