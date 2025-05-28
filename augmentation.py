@@ -1,222 +1,631 @@
-import numpy as np
+"""
+Data Augmentation Modules for EmotionNet
+Contains various augmentation strategies for preventing overfitting and handling class imbalance
+"""
+
 import torch
-import torchvision.transforms as transforms
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
-from PIL import Image
-import random
+import torch.nn as nn
+import torch.nn.functional as F
+from torchvision import transforms
+from torchvision.transforms import functional as F_t
+import numpy as np
 
-class DynamicAugmentation:
-    """
-    Dynamically adjusts augmentation strength based on class performance.
-    Underperforming classes receive stronger augmentation.
-    """
-    def __init__(self, num_classes=7, base_strength=0.5):
-        self.num_classes = num_classes
-        self.base_strength = base_strength
-        self.class_strengths = [base_strength] * num_classes
-        self.min_strength = 0.3
-        self.max_strength = 1.0
+
+class GridMask(nn.Module):
+    """Enhanced GridMask augmentation for stronger regularization"""
+    def __init__(self, d_range=(24, 72), r=0.6, p=0.4):
+        super().__init__()
+        self.d_range = d_range
+        self.r = r
+        self.p = p
         
-        # Initialize augmentation pools
-        self.weak_augs = A.Compose([
-            A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1, p=0.5),
-            A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.05, rotate_limit=5, p=0.5),
-            A.HorizontalFlip(p=0.5),
+    def forward(self, x):
+        if torch.rand(1) > self.p:
+            return x
+            
+        b, c, h, w = x.shape
+        d = torch.randint(self.d_range[0], self.d_range[1], (1,)).item()
+        l = int(d * self.r)
+        
+        # Create grid mask with random rotation
+        mask = torch.ones_like(x)
+        angle = torch.randint(-30, 30, (1,)).item()  # Random rotation angle
+        
+        for i in range(0, h, d):
+            for j in range(0, w, d):
+                if torch.rand(1) < 0.5:
+                    # Apply mask with random offset
+                    offset_i = torch.randint(-2, 3, (1,)).item()
+                    offset_j = torch.randint(-2, 3, (1,)).item()
+                    i_pos = min(max(i + offset_i, 0), h - l)
+                    j_pos = min(max(j + offset_j, 0), w - l)
+                    mask[:, :, i_pos:i_pos+l, j_pos:j_pos+l] = 0
+        
+        # Apply random rotation to mask
+        if angle != 0:
+            mask = F_t.rotate(mask, angle)
+        
+        return x * mask
+
+
+class ReducedAugmentation48(nn.Module):
+    """Reduced augmentation for 48x48 images with minimal transformations"""
+    def __init__(self, img_size=48, p=0.4):
+        super().__init__()
+        self.img_size = img_size
+        self.p = p
+        
+        # Minimal geometric augmentations
+        self.minimal_geometric = transforms.Compose([
+            transforms.RandomHorizontalFlip(p=0.3),  # Reduced probability
+            transforms.RandomRotation(10),            # Reduced rotation
+            transforms.RandomAffine(
+                degrees=5,                            # Minimal rotation
+                translate=(0.05, 0.05),              # Minimal translation
+                scale=(0.95, 1.05),                  # Minimal scaling
+                shear=5                              # Minimal shear
+            ),
         ])
         
-        self.medium_augs = A.Compose([
-            A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.7),
-            A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.1, rotate_limit=15, p=0.7),
-            A.HorizontalFlip(p=0.5),
-            A.OneOf([
-                A.MotionBlur(blur_limit=3),
-                A.GaussianBlur(blur_limit=3),
-                A.MedianBlur(blur_limit=3),
+        # Minimal color augmentations
+        self.minimal_color = transforms.Compose([
+            transforms.ColorJitter(
+                brightness=0.1,                      # Reduced brightness
+                contrast=0.1,                       # Reduced contrast
+                saturation=0.05,                    # Minimal saturation
+                hue=0.02                            # Minimal hue
+            ),
+        ])
+        
+        # Very light noise
+        self.light_noise = transforms.Compose([
+            transforms.RandomApply([
+                transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.5))  # Reduced blur
+            ], p=0.1),  # Very low probability
+        ])
+        
+        # Minimal erasing
+        self.minimal_erasing = transforms.RandomErasing(
+            p=0.1,                                   # Very low probability
+            scale=(0.01, 0.05),                     # Smaller scale
+            ratio=(0.5, 2.0), 
+            value='random'
+        )
+        
+        # Reduced class-specific augmentation probabilities (UPDATED for Angry/Neutral fix)
+        self.class_aug_probs = {
+            0: 0.8,  # Angry - DRAMATICALLY INCREASED (was 0.5) - complete failure needs aggressive aug
+            1: 0.1,  # Disgust - REDUCED (was 0.2) - performing too well, confusing with angry
+            2: 0.5,  # Fear - REDUCED (was 0.6) - moderate performance
+            3: 0.3,  # Happy - REDUCED (was 0.4) - good performance
+            4: 0.2,  # Sad - DRAMATICALLY REDUCED (was 0.6) - too dominant, confusing other classes
+            5: 0.3,  # Surprise - REDUCED (was 0.4) - good performance
+            6: 0.9   # Neutral - DRAMATICALLY INCREASED (was 0.3) - complete failure needs aggressive aug
+        }
+        
+    def apply_geometric_aug(self, x):
+        """Apply minimal geometric augmentations"""
+        batch_size = x.size(0)
+        device = x.device
+        dtype = x.dtype
+        
+        augmented = []
+        for i in range(batch_size):
+            img = x[i].cpu()
+            img_pil = transforms.ToPILImage()(img)
+            img_pil = self.minimal_geometric(img_pil)
+            img_tensor = transforms.ToTensor()(img_pil)
+            augmented.append(img_tensor.to(device, dtype=dtype))
+        
+        return torch.stack(augmented)
+    
+    def apply_color_aug(self, x):
+        """Apply minimal color augmentations"""
+        batch_size = x.size(0)
+        device = x.device
+        dtype = x.dtype
+        
+        augmented = []
+        for i in range(batch_size):
+            img = x[i].cpu()
+            img_pil = transforms.ToPILImage()(img)
+            img_pil = self.minimal_color(img_pil)
+            img_tensor = transforms.ToTensor()(img_pil)
+            augmented.append(img_tensor.to(device, dtype=dtype))
+        
+        return torch.stack(augmented)
+    
+    def forward(self, x, labels=None):
+        if labels is None:
+            # Apply minimal augmentation if no labels provided
+            if torch.rand(1) < self.p:
+                # Apply geometric augmentations (30% chance)
+                if torch.rand(1) < 0.3:
+                    x = self.apply_geometric_aug(x)
+                
+                # Apply color augmentations (20% chance)
+                if torch.rand(1) < 0.2:
+                    x = self.apply_color_aug(x)
+                
+                # Apply light noise (10% chance)
+                if torch.rand(1) < 0.1:
+                    x = self.light_noise(x)
+                
+                # Apply minimal erasing (10% chance)
+                if torch.rand(1) < 0.1:
+                    x = self.minimal_erasing(x)
+            
+            return torch.clamp(x, 0, 1)
+        
+        # Class-specific minimal augmentation
+        batch_size = x.size(0)
+        augmented_batch = []
+        
+        for i in range(batch_size):
+            img = x[i:i+1]  # Keep batch dimension
+            label = labels[i].item()
+            aug_prob = self.class_aug_probs.get(label, 0.3)
+            
+            if torch.rand(1) < aug_prob:
+                # Apply geometric augmentations (reduced probability)
+                if torch.rand(1) < 0.4:
+                    img = self.apply_geometric_aug(img)
+                
+                # Apply color augmentations (reduced probability)
+                if torch.rand(1) < 0.3:
+                    img = self.apply_color_aug(img)
+                
+                # Apply light noise (very low probability)
+                if torch.rand(1) < 0.1:
+                    img = self.light_noise(img)
+                
+                # Apply minimal erasing (very low probability)
+                if torch.rand(1) < 0.1:
+                    img = self.minimal_erasing(img)
+            
+            augmented_batch.append(img.squeeze(0))
+        
+        result = torch.stack(augmented_batch)
+        return torch.clamp(result, 0, 1)
+
+
+class EnhancedAntiOverfittingAugmentation(nn.Module):
+    """Enhanced augmentation specifically designed to prevent overfitting and handle class imbalance"""
+    def __init__(self, img_size=64, p=0.8):
+        super().__init__()
+        self.img_size = img_size
+        self.p = p
+        
+        # Strong geometric augmentations to prevent overfitting
+        self.strong_geometric = transforms.Compose([
+            transforms.RandomHorizontalFlip(p=0.6),
+            transforms.RandomRotation(25),
+            transforms.RandomAffine(
+                degrees=20,
+                translate=(0.15, 0.15),
+                scale=(0.85, 1.15),
+                shear=15
+            ),
+            transforms.RandomPerspective(distortion_scale=0.2, p=0.4),
+        ])
+        
+        # Enhanced color augmentations for generalization
+        self.enhanced_color = transforms.Compose([
+            transforms.ColorJitter(
+                brightness=0.3,
+                contrast=0.3,
+                saturation=0.2,
+                hue=0.1
+            ),
+            transforms.RandomAutocontrast(p=0.4),
+            transforms.RandomEqualize(p=0.4),
+            transforms.RandomSolarize(threshold=128, p=0.2),
+        ])
+        
+        # Noise and blur for robustness
+        self.noise_blur = transforms.Compose([
+            transforms.RandomApply([
+                transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.5))
             ], p=0.3),
-            A.RandomShadow(p=0.2),
-            A.CoarseDropout(max_holes=4, max_height=8, max_width=8, p=0.2),
         ])
         
-        self.strong_augs = A.Compose([
-            A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.8),
-            A.ShiftScaleRotate(shift_limit=0.15, scale_limit=0.15, rotate_limit=25, p=0.8),
-            A.HorizontalFlip(p=0.5),
-            A.OneOf([
-                A.MotionBlur(blur_limit=5),
-                A.GaussianBlur(blur_limit=5),
-                A.MedianBlur(blur_limit=5),
-            ], p=0.5),
-            A.OneOf([
-                A.OpticalDistortion(distort_limit=0.2),
-                A.GridDistortion(distort_limit=0.2),
-                A.ElasticTransform(alpha=1, sigma=10, alpha_affine=10),
-            ], p=0.3),
-            A.RandomShadow(p=0.3),
-            A.CoarseDropout(max_holes=8, max_height=16, max_width=16, p=0.4),
-            A.RandomGamma(p=0.3),
-        ])
+        # Multiple erasing strategies
+        self.erasing_strategies = [
+            transforms.RandomErasing(p=0.3, scale=(0.02, 0.1), ratio=(0.3, 3.0), value='random'),
+            transforms.RandomErasing(p=0.2, scale=(0.05, 0.15), ratio=(0.5, 2.0), value=0),
+            transforms.RandomErasing(p=0.2, scale=(0.03, 0.08), ratio=(0.8, 1.2), value=1),
+        ]
         
-        # Mixup/CutMix probabilities
-        self.mixup_prob = 0.3
-        self.cutmix_prob = 0.3
-        self.alpha = 0.4
+        # Grid mask for structured occlusion
+        self.grid_mask = GridMask(d_range=(8, 32), r=0.6, p=0.3)
+        
+        # Class-specific augmentation probabilities for class imbalance (UPDATED for Angry/Neutral fix)
+        self.class_aug_probs = {
+            0: 0.95, # Angry - DRAMATICALLY INCREASED (was 0.9) - complete failure
+            1: 0.2,  # Disgust - DRAMATICALLY REDUCED (was 0.4) - performing too well, confusing with angry
+            2: 0.8,  # Fear - REDUCED (was 0.95) - moderate performance
+            3: 0.7,  # Happy - REDUCED (was 0.85) - good performance
+            4: 0.3,  # Sad - DRAMATICALLY REDUCED (was 0.95) - too dominant, confusing other classes
+            5: 0.7,  # Surprise - REDUCED (was 0.85) - good performance
+            6: 0.95  # Neutral - DRAMATICALLY INCREASED (was 0.8) - complete failure
+        }
+        
+    def apply_geometric_aug(self, x):
+        """Apply geometric augmentations with proper device handling"""
+        batch_size = x.size(0)
+        device = x.device
+        dtype = x.dtype
+        
+        augmented = []
+        for i in range(batch_size):
+            img = x[i].cpu()
+            img_pil = transforms.ToPILImage()(img)
+            img_pil = self.strong_geometric(img_pil)
+            img_tensor = transforms.ToTensor()(img_pil)
+            augmented.append(img_tensor.to(device, dtype=dtype))
+        
+        return torch.stack(augmented)
     
-    def update_class_strengths(self, class_f1_scores):
-        """
-        Update augmentation strength based on F1 scores.
-        Lower F1 scores get stronger augmentation.
-        """
-        for i, f1 in enumerate(class_f1_scores):
-            # Scale strength inversely proportional to F1
-            inverse_strength = 1.0 - f1  # When F1 is low, inverse_strength is high
-            # Smooth changes with moving average
-            self.class_strengths[i] = 0.7 * self.class_strengths[i] + 0.3 * inverse_strength
-            # Clip to valid range
-            self.class_strengths[i] = max(self.min_strength, min(self.max_strength, self.class_strengths[i]))
+    def apply_color_aug(self, x):
+        """Apply color augmentations with proper device handling"""
+        batch_size = x.size(0)
+        device = x.device
+        dtype = x.dtype
         
-        # Log the updated strengths
-        print("Updated augmentation strengths by class:")
-        for i, strength in enumerate(self.class_strengths):
-            print(f"Class {i}: {strength:.3f}")
+        augmented = []
+        for i in range(batch_size):
+            img = x[i].cpu()
+            img_pil = transforms.ToPILImage()(img)
+            img_pil = self.enhanced_color(img_pil)
+            img_tensor = transforms.ToTensor()(img_pil)
+            augmented.append(img_tensor.to(device, dtype=dtype))
+        
+        return torch.stack(augmented)
     
-    def __call__(self, img, label=None):
-        """
-        Apply dynamic augmentation based on class label.
-        If label is None, applies medium augmentation.
-        """
-        # Convert PIL to numpy if needed
-        if isinstance(img, Image.Image):
-            img_np = np.array(img)
-        else:
-            img_np = img.copy()
+    def apply_erasing_aug(self, x):
+        """Apply random erasing augmentation"""
+        erasing_transform = np.random.choice(self.erasing_strategies)
+        return erasing_transform(x)
+    
+    def forward(self, x, labels=None):
+        if labels is None:
+            # Apply standard augmentation if no labels provided
+            if torch.rand(1) < self.p:
+                # Apply geometric augmentations (70% chance)
+                if torch.rand(1) < 0.7:
+                    x = self.apply_geometric_aug(x)
+                
+                # Apply color augmentations (60% chance)
+                if torch.rand(1) < 0.6:
+                    x = self.apply_color_aug(x)
+                
+                # Apply noise and blur (40% chance)
+                if torch.rand(1) < 0.4:
+                    x = self.noise_blur(x)
+                
+                # Apply erasing (50% chance)
+                if torch.rand(1) < 0.5:
+                    x = self.apply_erasing_aug(x)
+                
+                # Apply grid mask (30% chance)
+                if torch.rand(1) < 0.3:
+                    x = self.grid_mask(x)
+            
+            return torch.clamp(x, 0, 1)
         
-        # Choose augmentation strength based on class
-        if label is not None:
-            strength = self.class_strengths[label]
-        else:
-            strength = self.base_strength
+        # Class-specific augmentation for handling class imbalance
+        batch_size = x.size(0)
+        augmented_batch = []
         
-        # Apply augmentation based on strength
-        if strength < 0.4:
-            augmented = self.weak_augs(image=img_np)['image']
-        elif strength < 0.7:
-            augmented = self.medium_augs(image=img_np)['image']
-        else:
-            augmented = self.strong_augs(image=img_np)['image']
+        for i in range(batch_size):
+            img = x[i:i+1]  # Keep batch dimension
+            label = labels[i].item()
+            aug_prob = self.class_aug_probs.get(label, 0.7)
+            
+            if torch.rand(1) < aug_prob:
+                # Apply geometric augmentations (reduced probability)
+                if torch.rand(1) < 0.4:
+                    img = self.apply_geometric_aug(img)
+                
+                # Apply color augmentations (reduced probability)
+                if torch.rand(1) < 0.3:
+                    img = self.apply_color_aug(img)
+                
+                # Apply noise and blur
+                if torch.rand(1) < 0.5:
+                    img = self.noise_blur(img)
+                
+                # Apply erasing (higher probability for underrepresented classes)
+                erasing_prob = 0.7 if label in [2, 4] else 0.4  # Fear and Sad get more erasing
+                if torch.rand(1) < erasing_prob:
+                    img = self.apply_erasing_aug(img)
+                
+                # Apply grid mask
+                if torch.rand(1) < 0.4:
+                    img = self.grid_mask(img)
+            
+            augmented_batch.append(img.squeeze(0))
         
-        # Convert back to PIL
-        if isinstance(img, Image.Image):
-            return Image.fromarray(augmented)
-        return augmented
+        result = torch.stack(augmented_batch)
+        return torch.clamp(result, 0, 1)
 
-class MixAugmentation:
-    """
-    Implements Mixup and CutMix augmentations with dynamic probabilities.
-    """
-    def __init__(self, alpha=0.4, cutmix_alpha=1.0):
-        self.alpha = alpha
-        self.cutmix_alpha = cutmix_alpha
-        self.mixup_prob = 0.5
-        self.cutmix_prob = 0.3
-    
-    def update_probabilities(self, epoch, total_epochs):
-        """
-        Update mixup/cutmix probabilities based on training progress.
-        """
-        progress = epoch / total_epochs
-        # Increase mixup probability as training progresses
-        self.mixup_prob = min(0.8, 0.3 + progress * 0.5)
-        # Decrease cutmix probability as training progresses
-        self.cutmix_prob = max(0.1, 0.5 - progress * 0.4)
-    
-    def mixup(self, inputs, targets):
-        """
-        Apply mixup augmentation to a batch.
-        """
-        batch_size = inputs.size(0)
-        
-        # Generate mixup coefficient
-        lam = np.random.beta(self.alpha, self.alpha)
-        lam = max(lam, 1-lam)  # Ensure lam >= 0.5 for better stability
-        
-        # Create shuffled indices
-        index = torch.randperm(batch_size).to(inputs.device)
-        
-        # Mix the inputs
-        mixed_inputs = lam * inputs + (1 - lam) * inputs[index]
-        
-        # Return mixed inputs, pairs of targets, and lambda
-        return mixed_inputs, targets, targets[index], lam
-    
-    def cutmix(self, inputs, targets):
-        """
-        Apply cutmix augmentation to a batch.
-        """
-        batch_size = inputs.size(0)
-        
-        # Generate random box parameters
-        lam = np.random.beta(self.cutmix_alpha, self.cutmix_alpha)
-        
-        # Create shuffled indices
-        index = torch.randperm(batch_size).to(inputs.device)
-        
-        # Get dimensions
-        _, _, h, w = inputs.shape
-        
-        # Create random box
-        cut_ratio = np.sqrt(1.0 - lam)
-        cut_w = int(w * cut_ratio)
-        cut_h = int(h * cut_ratio)
-        
-        # Get random center
-        cx = np.random.randint(w)
-        cy = np.random.randint(h)
-        
-        # Calculate box boundaries
-        bbx1 = np.clip(cx - cut_w // 2, 0, w)
-        bby1 = np.clip(cy - cut_h // 2, 0, h)
-        bbx2 = np.clip(cx + cut_w // 2, 0, w)
-        bby2 = np.clip(cy + cut_h // 2, 0, h)
-        
-        # Apply cutmix
-        inputs_copy = inputs.clone()
-        inputs_copy[:, :, bby1:bby2, bbx1:bbx2] = inputs[index, :, bby1:bby2, bbx1:bbx2]
-        
-        # Adjust lambda based on actual box size
-        lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (w * h))
-        
-        return inputs_copy, targets, targets[index], lam
-    
-    def __call__(self, inputs, targets, epoch=0, total_epochs=30):
-        """
-        Apply either mixup, cutmix, or no augmentation based on probabilities.
-        """
-        self.update_probabilities(epoch, total_epochs)
-        
-        r = np.random.rand()
-        if r < self.mixup_prob:
-            return self.mixup(inputs, targets)
-        elif r < self.mixup_prob + self.cutmix_prob:
-            return self.cutmix(inputs, targets)
-        else:
-            # No mix augmentation, return original with dummy values
-            return inputs, targets, targets, 1.0
 
-def get_transform(phase, img_size=224, dynamic_aug=None):
-    """
-    Get transformation pipeline with optional dynamic augmentation.
-    """
-    if phase == 'train':
-        return transforms.Compose([
-            transforms.Resize((img_size, img_size)),
-            transforms.ColorJitter(brightness=0.2, contrast=0.2),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+class ConservativeClassSpecificAugmentation(nn.Module):
+    """Conservative class-specific augmentation optimized for custom ResEmoteNet with 64x64 images"""
+    def __init__(self, img_size=64):
+        super().__init__()
+        self.img_size = img_size
+        
+        # Define class-specific augmentation probabilities (UPDATED for Angry/Neutral fix)
+        self.class_aug_probs = {
+            'fear': 0.5,      # REDUCED (was 0.6) - moderate performance
+            'sad': 0.2,       # DRAMATICALLY REDUCED (was 0.6) - too dominant, confusing other classes
+            'angry': 0.8,     # DRAMATICALLY INCREASED (was 0.5) - complete failure needs aggressive aug
+            'neutral': 0.9,   # DRAMATICALLY INCREASED (was 0.5) - complete failure needs aggressive aug
+            'disgust': 0.2,   # REDUCED (was 0.4) - performing too well, confusing with angry
+            'happy': 0.3,     # REDUCED (was 0.4) - good performance
+            'surprise': 0.3   # REDUCED (was 0.4) - good performance
+        }
+        
+        # Emotion label mapping
+        self.emotion_map = {
+            0: 'angry', 1: 'disgust', 2: 'fear', 3: 'happy',
+            4: 'sad', 5: 'surprise', 6: 'neutral'
+        }
+        
+        # Conservative geometric augmentations
+        self.conservative_geometric = transforms.Compose([
+            transforms.RandomRotation(15, fill=0),
+            transforms.RandomAffine(
+                degrees=10,
+                translate=(0.1, 0.1),
+                scale=(0.9, 1.1),
+                shear=5,
+                fill=0
+            )
         ])
-    else:
-        return transforms.Compose([
-            transforms.Resize((img_size, img_size)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ]) 
+        
+        # Conservative color augmentations
+        self.conservative_color = transforms.Compose([
+            transforms.ColorJitter(
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.1,
+                hue=0.05
+            )
+        ])
+        
+        # Mild noise and blur
+        self.mild_effects = transforms.Compose([
+            transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.5)),
+        ])
+    
+    def apply_augmentation(self, img, aug_type):
+        """Apply specific augmentation type with proper device handling"""
+        device = img.device
+        dtype = img.dtype
+        
+        if aug_type == 'minimal':
+            img_cpu = img.cpu()
+            img_pil = transforms.ToPILImage()(img_cpu)
+            img_pil = transforms.RandomHorizontalFlip(p=0.3)(img_pil)
+            img_tensor = transforms.ToTensor()(img_pil)
+            return img_tensor.to(device, dtype=dtype)
+            
+        elif aug_type == 'geometric':
+            img_cpu = img.cpu()
+            img_pil = transforms.ToPILImage()(img_cpu)
+            img_aug = self.conservative_geometric(img_pil)
+            img_tensor = transforms.ToTensor()(img_aug)
+            return img_tensor.to(device, dtype=dtype)
+            
+        elif aug_type == 'color':
+            img_cpu = img.cpu()
+            img_pil = transforms.ToPILImage()(img_cpu)
+            img_aug = self.conservative_color(img_pil)
+            img_tensor = transforms.ToTensor()(img_aug)
+            return img_tensor.to(device, dtype=dtype)
+            
+        elif aug_type == 'effects':
+            img_cpu = img.cpu()
+            img_pil = transforms.ToPILImage()(img_cpu)
+            img_aug = self.mild_effects(img_pil)
+            img_tensor = transforms.ToTensor()(img_aug)
+            return img_tensor.to(device, dtype=dtype)
+            
+        elif aug_type == 'combined':
+            img_cpu = img.cpu()
+            img_pil = transforms.ToPILImage()(img_cpu)
+            # Apply multiple augmentations
+            img_aug = self.conservative_geometric(img_pil)
+            img_aug = self.conservative_color(img_aug)
+            img_aug = self.mild_effects(img_aug)
+            img_tensor = transforms.ToTensor()(img_aug)
+            return img_tensor.to(device, dtype=dtype)
+        else:
+            return img
+    
+    def forward(self, x, labels=None):
+        if labels is None or not self.training:
+            return x
+        
+        batch_size = x.size(0)
+        augmented_batch = []
+        
+        for i in range(batch_size):
+            img = x[i]
+            label = labels[i].item()
+            emotion = self.emotion_map.get(label, 'neutral')
+            aug_prob = self.class_aug_probs.get(emotion, 0.3)
+            
+            if torch.rand(1).item() < aug_prob:
+                # Choose augmentation type based on emotion
+                if emotion in ['fear', 'sad']:  # Enhanced classes
+                    aug_types = ['combined', 'geometric', 'color']
+                    aug_type = torch.randint(0, len(aug_types), (1,)).item()
+                    aug_type = aug_types[aug_type]
+                elif emotion in ['angry', 'neutral']:  # Moderate classes
+                    aug_types = ['geometric', 'color', 'effects']
+                    aug_type = torch.randint(0, len(aug_types), (1,)).item()
+                    aug_type = aug_types[aug_type]
+                else:  # Standard classes
+                    aug_types = ['minimal', 'geometric', 'color']
+                    aug_type = torch.randint(0, len(aug_types), (1,)).item()
+                    aug_type = aug_types[aug_type]
+                
+                img = self.apply_augmentation(img, aug_type)
+            
+            augmented_batch.append(img)
+        
+        return torch.stack(augmented_batch)
+
+
+class ExtremeAugmentation64(nn.Module):
+    """Extreme augmentation for 64x64 images with less severe transforms"""
+    def __init__(self, config=None):
+        super(ExtremeAugmentation64, self).__init__()
+        
+        # Use the updated less severe configuration
+        from constants import EXTREME_AUGMENTATION_CONFIG
+        self.config = config or EXTREME_AUGMENTATION_CONFIG
+        
+        # Less severe geometric transforms
+        self.geometric_transforms = transforms.Compose([
+            transforms.RandomRotation(degrees=self.config['geometric_transforms']['rotation_range']),  # ±10°
+            transforms.RandomAffine(
+                degrees=0,
+                translate=(self.config['geometric_transforms']['translation_range'], 
+                          self.config['geometric_transforms']['translation_range']),  # ±8%
+                scale=self.config['geometric_transforms']['scale_range'],  # (0.92, 1.08)
+                shear=self.config['geometric_transforms']['shear_range']   # ±5°
+            ),
+        ])
+        
+        # Less severe color transforms
+        self.color_transforms = transforms.Compose([
+            transforms.ColorJitter(
+                brightness=self.config['color_transforms']['brightness_range'],  # ±15%
+                contrast=self.config['color_transforms']['contrast_range'],      # ±15%
+                saturation=self.config['color_transforms']['saturation_range'], # ±10%
+                hue=self.config['color_transforms']['hue_range']                 # ±3%
+            ),
+        ])
+        
+        # Reduced noise and effects
+        self.noise_std = self.config['noise_and_effects']['gaussian_noise_std']  # 0.02
+        self.salt_pepper_prob = self.config['noise_and_effects']['salt_pepper_prob']  # 0.005
+        self.motion_blur_prob = self.config['noise_and_effects']['motion_blur_prob']  # 0.08
+        self.gaussian_blur_prob = self.config['noise_and_effects']['gaussian_blur_prob']  # 0.08
+        
+        # Reduced erasing and masking
+        self.random_erasing = transforms.RandomErasing(
+            p=self.config['erasing_and_masking']['random_erasing_prob'],  # 0.10
+            scale=(0.02, 0.15),  # Smaller erasing areas
+            ratio=(0.3, 3.3),
+            value=0
+        )
+        
+        # Class-specific probabilities (UPDATED for Angry/Neutral fix)
+        self.class_probs = {
+            'angry': 0.9,    # DRAMATICALLY INCREASED - complete failure needs aggressive aug
+            'disgust': 0.2,  # DRAMATICALLY REDUCED - performing too well, confusing with angry
+            'fear': 0.6,     # REDUCED - moderate performance
+            'happy': 0.4,    # REDUCED - good performance
+            'neutral': 0.95, # DRAMATICALLY INCREASED - complete failure needs aggressive aug
+            'sad': 0.25,     # DRAMATICALLY REDUCED - too dominant, confusing other classes
+            'surprise': 0.4  # REDUCED - good performance
+        }
+        
+    def forward(self, x, emotion_label=None):
+        """Apply less severe augmentation based on emotion class"""
+        if emotion_label is None:
+            # Apply augmentation to entire batch with default probability
+            if torch.rand(1).item() < self.config['overall_probability']:
+                return self._apply_augmentation_to_batch(x)
+            return x
+        
+        # Handle batch processing
+        batch_size = x.size(0)
+        augmented_batch = []
+        emotion_names = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
+        
+        for i in range(batch_size):
+            img = x[i:i+1]  # Keep batch dimension
+            label = emotion_label[i].item() if emotion_label[i].dim() == 0 else emotion_label[i].item()
+            
+            # Determine augmentation probability based on emotion
+            if label < len(emotion_names):
+                emotion_name = emotion_names[label]
+                aug_prob = self.class_probs.get(emotion_name, self.config['overall_probability'])
+            else:
+                aug_prob = self.config['overall_probability']
+            
+            # Apply augmentation with emotion-specific probability
+            if torch.rand(1).item() < aug_prob:
+                img = self._apply_augmentation_to_single(img)
+            
+            augmented_batch.append(img.squeeze(0))  # Remove batch dimension
+        
+        return torch.stack(augmented_batch)
+    
+    def _apply_augmentation_to_batch(self, x):
+        """Apply augmentation to entire batch"""
+        # Apply geometric transforms with reduced probability
+        if torch.rand(1).item() < self.config['geometric_transforms']['probability']:  # 0.40
+            x = self.geometric_transforms(x)
+        
+        # Apply color transforms with reduced probability
+        if torch.rand(1).item() < self.config['color_transforms']['probability']:  # 0.35
+            x = self.color_transforms(x)
+        
+        # Apply noise and effects with reduced probability
+        if torch.rand(1).item() < self.config['noise_and_effects']['probability']:  # 0.25
+            # Reduced gaussian noise
+            if torch.rand(1).item() < 0.3:  # Reduced from 0.5
+                noise = torch.randn_like(x) * self.noise_std
+                x = torch.clamp(x + noise, 0, 1)
+            
+            # Reduced motion blur
+            if torch.rand(1).item() < self.motion_blur_prob:
+                x = transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0))(x)
+            
+            # Reduced gaussian blur
+            if torch.rand(1).item() < self.gaussian_blur_prob:
+                x = transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.8))(x)
+        
+        # Apply erasing with reduced probability
+        if torch.rand(1).item() < self.config['erasing_and_masking']['probability']:  # 0.20
+            x = self.random_erasing(x)
+        
+        return x
+    
+    def _apply_augmentation_to_single(self, x):
+        """Apply augmentation to a single image (with batch dimension)"""
+        # Apply geometric transforms with reduced probability
+        if torch.rand(1).item() < self.config['geometric_transforms']['probability']:  # 0.40
+            x = self.geometric_transforms(x)
+        
+        # Apply color transforms with reduced probability
+        if torch.rand(1).item() < self.config['color_transforms']['probability']:  # 0.35
+            x = self.color_transforms(x)
+        
+        # Apply noise and effects with reduced probability
+        if torch.rand(1).item() < self.config['noise_and_effects']['probability']:  # 0.25
+            # Reduced gaussian noise
+            if torch.rand(1).item() < 0.3:  # Reduced from 0.5
+                noise = torch.randn_like(x) * self.noise_std
+                x = torch.clamp(x + noise, 0, 1)
+            
+            # Reduced motion blur
+            if torch.rand(1).item() < self.motion_blur_prob:
+                x = transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0))(x)
+            
+            # Reduced gaussian blur
+            if torch.rand(1).item() < self.gaussian_blur_prob:
+                x = transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.8))(x)
+        
+        # Apply erasing with reduced probability
+        if torch.rand(1).item() < self.config['erasing_and_masking']['probability']:  # 0.20
+            x = self.random_erasing(x)
+        
+        return x 
