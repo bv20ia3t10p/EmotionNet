@@ -1,22 +1,29 @@
 """
-EmotionNet Model Architecture - SOTA Optimized
-Enhanced multi-scale attention architecture for superior emotion recognition
+Enhanced SOTA EmotionNet Model - 79%+ Target
+Advanced architecture with state-of-the-art components for superior emotion recognition
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from timm import create_model
 from attention_modules import SEBlock, CBAM, ECABlock, CoordinateAttention, MultiHeadSelfAttention
 
 
-class SimpleResidualBlock(nn.Module):
-    """Simplified Residual Block focused on performance"""
-    def __init__(self, in_ch, out_ch, stride=1):
-        super(SimpleResidualBlock, self).__init__()
+class EnhancedResidualBlock(nn.Module):
+    """Enhanced Residual Block with Stochastic Depth and Squeeze-Excitation"""
+    def __init__(self, in_ch, out_ch, stride=1, drop_path_rate=0.1):
+        super(EnhancedResidualBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=stride, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_ch)
         self.conv2 = nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_ch)
+        
+        # Add SE block for channel attention
+        self.se = SEBlock(out_ch, reduction=16)
+        
+        # Stochastic depth (drop path)
+        self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0 else nn.Identity()
         
         self.shortcut = nn.Sequential()
         if stride != 1 or in_ch != out_ch:
@@ -29,111 +36,183 @@ class SimpleResidualBlock(nn.Module):
         identity = self.shortcut(x)
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
-        out += identity
+        out = self.se(out)  # Apply SE attention
+        out = self.drop_path(out) + identity
         out = F.relu(out)
         return out
 
 
-class SOTAEmotionNet(nn.Module):
-    """SOTA Optimized EmotionNet - Multi-Scale Attention Architecture"""
-    def __init__(self, num_classes=7, dropout_rate=0.3):
-        super(SOTAEmotionNet, self).__init__()
+class DropPath(nn.Module):
+    """Drop paths (Stochastic Depth) per sample."""
+    def __init__(self, drop_prob=0.):
+        super(DropPath, self).__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x):
+        if self.drop_prob == 0. or not self.training:
+            return x
+        keep_prob = 1 - self.drop_prob
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+        random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+        random_tensor.floor_()
+        output = x.div(keep_prob) * random_tensor
+        return output
+
+
+class PyramidPooling(nn.Module):
+    """Pyramid Pooling Module for multi-scale context"""
+    def __init__(self, in_channels, out_channels, sizes=(1, 2, 3, 6)):
+        super(PyramidPooling, self).__init__()
+        self.stages = nn.ModuleList()
+        self.stages.append(nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU()
+        ))
+        for size in sizes[1:]:
+            self.stages.append(nn.Sequential(
+                nn.AdaptiveAvgPool2d(size),
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU()
+            ))
         
-        # Initial convolution optimized for 48x48
-        self.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)  # 48x48 -> 24x24
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)  # 24x24 -> 12x12
+    def forward(self, x):
+        h, w = x.size(2), x.size(3)
+        out = []
+        for stage in self.stages:
+            out.append(F.interpolate(stage(x), size=(h, w), mode='bilinear', align_corners=False))
+        return torch.cat(out, dim=1)
+
+
+class EmotionSpecificHead(nn.Module):
+    """Emotion-specific classification head with multi-task learning"""
+    def __init__(self, in_features, num_classes=7):
+        super(EmotionSpecificHead, self).__init__()
         
-        # Multi-scale feature extraction with progressive attention
-        self.layer1 = self._make_layer(64, 128, 2, stride=1)    # 12x12 -> 12x12
-        self.layer2 = self._make_layer(128, 256, 2, stride=2)   # 12x12 -> 6x6
-        self.layer3 = self._make_layer(256, 512, 2, stride=2)   # 6x6 -> 3x3
-        
-        # Multi-Scale Attention Strategy (6 attention mechanisms)
-        # Layer 1 attention (128 channels, 12x12) - Spatial focus for basic features
-        self.layer1_attention = ECABlock(128, gamma=2, b=1)
-        
-        # Layer 2 attention (256 channels, 6x6) - Coordinate attention for spatial relationships
-        self.layer2_attention = CoordinateAttention(256, reduction=16)
-        
-        # Layer 3 attention stack (512 channels, 3x3) - Multiple attention for complex emotions
-        self.layer3_se = SEBlock(512, reduction=16)
-        self.layer3_cbam = CBAM(512, reduction=16)
-        self.layer3_self_attn = MultiHeadSelfAttention(512, num_heads=8, dropout=0.1)
-        
-        # Cross-scale feature fusion with attention
-        self.cross_scale_fusion = nn.ModuleDict({
-            'layer1_proj': nn.Sequential(
-                nn.Conv2d(128, 256, kernel_size=1, bias=False),
-                nn.BatchNorm2d(256),
-                nn.ReLU(inplace=True)
-            ),
-            'layer2_proj': nn.Sequential(
-                nn.Conv2d(256, 256, kernel_size=1, bias=False),
-                nn.BatchNorm2d(256),
-                nn.ReLU(inplace=True)
-            ),
-            'layer3_proj': nn.Sequential(
-                nn.Conv2d(512, 256, kernel_size=1, bias=False),
-                nn.BatchNorm2d(256),
-                nn.ReLU(inplace=True)
-            )
-        })
-        
-        # Adaptive pooling for multi-scale fusion
-        self.adaptive_pools = nn.ModuleDict({
-            'pool_12_to_3': nn.AdaptiveAvgPool2d(3),
-            'pool_6_to_3': nn.AdaptiveAvgPool2d(3),
-            'pool_3_to_3': nn.Identity()
-        })
-        
-        # Final fusion with attention
-        self.final_fusion = nn.Sequential(
-            nn.Conv2d(256 * 3, 511, kernel_size=1, bias=False),  # 768 -> 511 (divisible by 7)
-            nn.BatchNorm2d(511),
-            nn.ReLU(inplace=True)
-        )
-        
-        # Emotion-specific feature enhancement
-        self.emotion_enhancement = nn.Sequential(
-            nn.Conv2d(511, 511, kernel_size=3, padding=1, groups=7, bias=False),  # 511/7 = 73 channels per group
-            nn.BatchNorm2d(511),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(511, 512, kernel_size=1, bias=False),  # Project back to 512 for consistency
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True)
-        )
-        
-        # Global pooling strategies
-        self.global_avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.global_max_pool = nn.AdaptiveMaxPool2d(1)
-        
-        # Enhanced classifier with progressive dropout
-        self.emotion_classifier = nn.Sequential(
-            nn.Dropout(dropout_rate),
-            nn.Linear(512 * 2, 512),  # *2 for avg+max pooling
-            nn.ReLU(inplace=True),
+        # Shared feature processing
+        self.shared_fc = nn.Sequential(
+            nn.Linear(in_features, 512),
+            nn.ReLU(),
             nn.BatchNorm1d(512),
-            nn.Dropout(dropout_rate * 0.7),
-            nn.Linear(512, 256),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm1d(256),
-            nn.Dropout(dropout_rate * 0.5),
-            nn.Linear(256, 128),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm1d(128),
-            nn.Dropout(dropout_rate * 0.3),
-            nn.Linear(128, num_classes)
+            nn.Dropout(0.3)
         )
+        
+        # Emotion-specific branches
+        self.emotion_branches = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(512, 128),
+                nn.ReLU(),
+                nn.BatchNorm1d(128),
+                nn.Dropout(0.2),
+                nn.Linear(128, 1)
+            ) for _ in range(num_classes)
+        ])
+        
+        # Global classifier
+        self.global_classifier = nn.Sequential(
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.BatchNorm1d(256),
+            nn.Dropout(0.3),
+            nn.Linear(256, num_classes)
+        )
+        
+    def forward(self, x):
+        shared = self.shared_fc(x)
+        
+        # Get emotion-specific predictions
+        emotion_scores = []
+        for branch in self.emotion_branches:
+            emotion_scores.append(branch(shared))
+        emotion_scores = torch.cat(emotion_scores, dim=1)
+        
+        # Get global predictions
+        global_scores = self.global_classifier(shared)
+        
+        # Combine predictions
+        combined_scores = 0.7 * global_scores + 0.3 * emotion_scores
+        
+        return combined_scores
+
+
+class EnhancedSOTAEmotionNet(nn.Module):
+    """Enhanced SOTA EmotionNet for 79%+ accuracy"""
+    def __init__(self, num_classes=7, dropout_rate=0.35, use_pretrained_backbone=True):
+        super(EnhancedSOTAEmotionNet, self).__init__()
+        
+        if use_pretrained_backbone:
+            # Use EfficientNet-B0 backbone pretrained on ImageNet
+            self.backbone = create_model('efficientnet_b0', pretrained=True, in_chans=1, num_classes=0)
+            backbone_dim = 1280
+        else:
+            # Custom backbone
+            backbone_dim = 512
+            self.backbone = self._create_custom_backbone()
+        
+        # Multi-scale context module
+        pyramid_out_channels = backbone_dim // 8  # Reduce to prevent dimension explosion
+        self.pyramid_pooling = PyramidPooling(backbone_dim, pyramid_out_channels)
+        
+        # Calculate pyramid dimensions dynamically
+        # We need to test with a dummy input to get actual dimensions
+        self.backbone_dim = backbone_dim
+        self.pyramid_out_channels = pyramid_out_channels
+        
+        # Initialize feature reduction as None, will be created in first forward pass
+        self.feature_reduce = None
+        
+        # Advanced attention mechanisms with consistent dimensions
+        self.channel_attention = None
+        self.spatial_attention = None
+        self.self_attention = None
+        
+        # Feature fusion
+        self.feature_fusion = None
+        
+        # Dual pooling
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        
+        # Advanced classifier with emotion-specific heads
+        self.classifier = EmotionSpecificHead(256 * 2, num_classes)
+        
+        # Auxiliary outputs for deep supervision
+        self.aux_classifier = nn.Linear(backbone_dim, num_classes)
         
         self._initialize_weights()
+        self._initialized = False
     
-    def _make_layer(self, in_channels, out_channels, blocks, stride=1):
+    def _create_custom_backbone(self):
+        """Create custom backbone when not using pretrained"""
         layers = []
-        layers.append(SimpleResidualBlock(in_channels, out_channels, stride))
-        for _ in range(1, blocks):
-            layers.append(SimpleResidualBlock(out_channels, out_channels, 1))
+        
+        # Initial layers
+        layers.extend([
+            nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        ])
+        
+        # Residual stages with increasing drop path rate
+        channels = [64, 128, 256, 512]
+        blocks = [2, 3, 4, 3]
+        drop_path_rates = torch.linspace(0, 0.2, sum(blocks))
+        
+        idx = 0
+        for i in range(len(channels) - 1):
+            for j in range(blocks[i]):
+                stride = 2 if j == 0 and i > 0 else 1
+                layers.append(EnhancedResidualBlock(
+                    channels[i] if j == 0 else channels[i+1],
+                    channels[i+1],
+                    stride=stride,
+                    drop_path_rate=drop_path_rates[idx].item()
+                ))
+                idx += 1
+        
         return nn.Sequential(*layers)
     
     def _initialize_weights(self):
@@ -150,56 +229,88 @@ class SOTAEmotionNet(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
     
+    def _initialize_layers(self, pyramid_features):
+        """Initialize layers based on actual pyramid feature dimensions"""
+        actual_pyramid_dim = pyramid_features.size(1)
+        
+        # Feature reduction before attention to prevent dimension issues
+        self.feature_reduce = nn.Sequential(
+            nn.Conv2d(actual_pyramid_dim, 512, kernel_size=1, bias=False),
+            nn.BatchNorm2d(512),
+            nn.ReLU()
+        ).to(pyramid_features.device)
+        
+        # Advanced attention mechanisms with consistent dimensions
+        self.channel_attention = SEBlock(512, reduction=8).to(pyramid_features.device)
+        self.spatial_attention = CBAM(512, reduction=8).to(pyramid_features.device)
+        self.self_attention = MultiHeadSelfAttention(512, num_heads=8, dropout=0.1).to(pyramid_features.device)
+        
+        # Feature fusion
+        self.feature_fusion = nn.Sequential(
+            nn.Conv2d(512, 256, kernel_size=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU()
+        ).to(pyramid_features.device)
+        
+        self._initialized = True
+        print(f"✅ Dynamic layer initialization: {actual_pyramid_dim} → 512 → 256 channels")
+    
     def forward(self, x):
-        # Initial feature extraction
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
+        # Extract features
+        if hasattr(self.backbone, 'forward_features'):
+            features = self.backbone.forward_features(x)
+            # Get spatial dimensions
+            if len(features.shape) == 2:
+                # Global pooling already applied
+                aux_out = self.aux_classifier(features)
+                # Reshape for spatial operations
+                B = features.shape[0]
+                features = features.view(B, -1, 1, 1)
+            else:
+                aux_out = self.aux_classifier(self.avg_pool(features).view(features.size(0), -1))
+        else:
+            features = self.backbone(x)
+            aux_out = self.aux_classifier(self.avg_pool(features).view(features.size(0), -1))
         
-        # Multi-scale feature learning with progressive attention
-        x1 = self.layer1(x)                    # 128 channels, 12x12
-        x1_att = self.layer1_attention(x1)     # ECA attention for efficient channel focus
+        # Multi-scale context
+        pyramid_features = self.pyramid_pooling(features)
         
-        x2 = self.layer2(x1_att)               # 256 channels, 6x6  
-        x2_att = self.layer2_attention(x2)     # Coordinate attention for spatial awareness
+        # Initialize layers on first forward pass
+        if not self._initialized:
+            self._initialize_layers(pyramid_features)
         
-        x3 = self.layer3(x2_att)               # 512 channels, 3x3
+        # Reduce dimensions before attention
+        reduced_features = self.feature_reduce(pyramid_features)
         
-        # Triple attention at final layer for complex emotion discrimination
-        x3_se = self.layer3_se(x3)             # Squeeze-and-Excitation
-        x3_cbam = self.layer3_cbam(x3_se)      # Convolutional Block Attention
-        x3_self = self.layer3_self_attn(x3_cbam)  # Multi-Head Self-Attention
+        # Apply attention mechanisms
+        attended_features = self.channel_attention(reduced_features)
+        attended_features = self.spatial_attention(attended_features)
+        attended_features = self.self_attention(attended_features)
         
-        # Cross-scale feature fusion
-        # Project all layers to same channel dimension (256)
-        x1_proj = self.cross_scale_fusion['layer1_proj'](x1_att)
-        x2_proj = self.cross_scale_fusion['layer2_proj'](x2_att)
-        x3_proj = self.cross_scale_fusion['layer3_proj'](x3_self)
+        # Feature fusion
+        fused_features = self.feature_fusion(attended_features)
         
-        # Resize to same spatial dimensions (3x3)
-        x1_pooled = self.adaptive_pools['pool_12_to_3'](x1_proj)
-        x2_pooled = self.adaptive_pools['pool_6_to_3'](x2_proj)
-        x3_pooled = self.adaptive_pools['pool_3_to_3'](x3_proj)
-        
-        # Fuse multi-scale features
-        fused = torch.cat([x1_pooled, x2_pooled, x3_pooled], dim=1)  # 768 channels
-        fused = self.final_fusion(fused)  # 768 -> 511 channels
-        
-        # Emotion-specific enhancement
-        enhanced = self.emotion_enhancement(fused)
-        
-        # Dual global pooling for richer feature representation
-        avg_pooled = self.global_avg_pool(enhanced).view(enhanced.size(0), -1)
-        max_pooled = self.global_max_pool(enhanced).view(enhanced.size(0), -1)
-        combined_pooled = torch.cat([avg_pooled, max_pooled], dim=1)  # 1024 features
+        # Dual pooling
+        avg_pooled = self.avg_pool(fused_features).view(fused_features.size(0), -1)
+        max_pooled = self.max_pool(fused_features).view(fused_features.size(0), -1)
+        combined_features = torch.cat([avg_pooled, max_pooled], dim=1)
         
         # Final classification
-        output = self.emotion_classifier(combined_pooled)
+        output = self.classifier(combined_features)
         
-        return output
+        # Return main output and auxiliary output for training
+        if self.training:
+            return output, aux_out
+        else:
+            return output
 
 
-def create_emotion_model(num_classes=7, dropout_rate=0.3, backbone=None, img_size=48, extreme_aug=False):
-    """Factory function to create enhanced multi-scale SOTA model"""
-    return SOTAEmotionNet(num_classes=num_classes, dropout_rate=dropout_rate) 
+def create_emotion_model(num_classes=7, dropout_rate=0.35, use_pretrained_backbone=True, **kwargs):
+    """Create the enhanced SOTA emotion recognition model."""
+    print("🚀 Creating Enhanced SOTA EmotionNet for 79%+ accuracy")
+    return EnhancedSOTAEmotionNet(
+        num_classes=num_classes, 
+        dropout_rate=dropout_rate,
+        use_pretrained_backbone=use_pretrained_backbone,
+        **kwargs
+    ) 

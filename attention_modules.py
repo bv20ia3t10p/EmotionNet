@@ -19,7 +19,7 @@ class SEBlock(nn.Module):
         
         self.fc = nn.Sequential(
             nn.Linear(in_channels * 2, reduced_channels, bias=False),  # *2 for avg+max
-            nn.ReLU(inplace=True),
+            nn.ReLU(),  # Remove inplace=True for SAM compatibility
             nn.Linear(reduced_channels, in_channels, bias=False),
             nn.Sigmoid()
         )
@@ -91,7 +91,7 @@ class CoordinateAttention(nn.Module):
         mip = max(8, in_channels // reduction)
         self.conv1 = nn.Conv2d(in_channels, mip, kernel_size=1, stride=1, padding=0)
         self.bn1 = nn.BatchNorm2d(mip)
-        self.act = nn.ReLU(inplace=True)
+        self.act = nn.ReLU()  # Remove inplace=True for SAM compatibility
         
         self.conv_h = nn.Conv2d(mip, in_channels, kernel_size=1, stride=1, padding=0)
         self.conv_w = nn.Conv2d(mip, in_channels, kernel_size=1, stride=1, padding=0)
@@ -192,7 +192,7 @@ class ChannelShuffleAttention(nn.Module):
         
         self.fc = nn.Sequential(
             nn.Linear(channels * 2, channels // 4, bias=False),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             nn.Linear(channels // 4, channels, bias=False),
             nn.Sigmoid()
         )
@@ -236,7 +236,7 @@ class PyramidPoolingAttention(nn.Module):
                 nn.AdaptiveAvgPool2d(pool_size),
                 nn.Conv2d(channels, channels // len(pool_sizes), 1, bias=False),
                 nn.BatchNorm2d(channels // len(pool_sizes)),
-                nn.ReLU(inplace=True)
+                nn.ReLU()  # Remove inplace=True for SAM compatibility
             ))
         
         self.fusion = nn.Sequential(
