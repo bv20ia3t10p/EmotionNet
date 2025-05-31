@@ -1,136 +1,108 @@
-# Enhanced SOTA EmotionNet - 79%+ Target
+# EmotionNet for Facial Emotion Recognition
 
-🚀 **Optimized emotion recognition model designed to beat ResEmoteNet's 79% SOTA accuracy on FER2013**
+A facial emotion recognition model with attention mechanisms for both FER2013 and FERPlus datasets.
 
-## Features
+## Key Features
 
-### ✅ Advanced Architecture
-- **Enhanced SOTA EmotionNet**: Multi-scale attention architecture with EfficientNet backbone
-- **Attention Mechanisms**: SE, CBAM, Coordinate, and Multi-Head Self-Attention
-- **Multi-scale Feature Fusion**: Pyramid pooling and cross-scale connections
-- **Emotion-specific Classification**: Multi-task learning with auxiliary outputs
+- **Attention-Based Architecture**: Effective attention mechanisms including:
+  - Squeeze-and-Excitation (SE) blocks
+  - Residual connections
+  - Stochastic depth for regularization
 
-### ✅ Advanced Training Techniques
-- **SAM Optimizer**: Sharpness Aware Minimization for better generalization
-- **OneCycleLR Scheduler**: Optimal learning rate scheduling
-- **Label Smoothing**: 0.1 smoothing to prevent overconfidence
-- **Gradient Accumulation**: Effective batch size of 64
-- **Extended Training**: 300 epochs for maximum performance
+- **Training Features**:
+  - Data augmentation techniques
+  - Learning rate scheduling
+  - Regularization methods
+  - Support for both FER2013 (7 emotions) and FERPlus (8 emotions) datasets
 
-### ✅ Advanced Augmentation
-- **MixUp & CutMix**: α=0.4, α=0.5 for better regularization
-- **RandAugment**: Automatic augmentation policy optimization
-- **Class-Specific Augmentation**: Fear (95%), Sad (90%) for class balance
-- **Test Time Augmentation**: 5 transforms for enhanced inference
+## Datasets
 
-### ✅ Optimized Configuration
-- **Pre-tuned Hyperparameters**: All settings optimized for FER2013
-- **Class Weights**: Balanced for optimal emotion recognition
-- **Clean Architecture**: Simplified, maintainable codebase
+The model supports two datasets:
 
-## Quick Start
+### FER2013
+- 48x48 grayscale facial images
+- Seven emotions: Angry, Disgust, Fear, Happy, Sad, Surprise, Neutral
 
-### 1. Install Dependencies
+### FERPlus
+- Extension of FER2013 with 8 emotions
+- Adds "Contempt" as the 8th emotion
+- Multiple annotation modes: majority voting, probability distribution, or multi-target
+
+## Model Architecture
+
+AttentionEmotionNet uses an effective architecture with:
+
+1. **Initial Feature Extraction**: Convolutional stem for feature capture
+2. **Attention Mechanisms**: Channel attention via SE blocks
+3. **Progressive Feature Extraction**: Carefully designed convolutional blocks
+4. **Regularization**: Stochastic depth and dropout for preventing overfitting
+5. **Configurable Classifier**: Adaptable to different numbers of emotion classes
+
+## Usage
+
+### Prerequisites
+
+Install the required packages:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Run Training
+### Training the Model
+
+To train on the FER2013 dataset (7 emotions):
+
 ```bash
-# Quick start with all optimizations
-python run_enhanced_training.py
-
-# Or run directly
-python main.py
+python train.py --mode default --stochastic-depth
 ```
 
-## Project Structure
+To train on the FERPlus dataset (8 emotions):
 
-```
-EmotionNet/
-├── main.py                    # Main training script
-├── run_enhanced_training.py   # Quick start script
-├── config.py                  # Optimized configuration
-├── config_loader.py           # Configuration loader
-├── trainer.py                 # Enhanced SOTA trainer
-├── emotion_model.py           # Model factory
-├── enhanced_emotion_model.py  # Enhanced model architecture
-├── sam_optimizer.py           # SAM optimizer implementation
-├── dataset.py                 # Data loading and augmentation
-├── attention_modules.py       # Attention mechanisms
-├── loss_functions.py          # Loss functions
-├── metrics.py                 # Evaluation metrics
-├── checkpoint_manager.py      # Model checkpointing
-├── utils.py                   # Utility functions
-└── requirements.txt           # Dependencies
+```bash
+python train.py --mode ferplus --ferplus-dir path/to/ferplus --ferplus-mode majority
 ```
 
-## Configuration
+Key command-line arguments:
 
-The configuration is optimized for 79%+ accuracy with these key settings:
+- `--mode`: Training mode (default, quick, ferplus)
+- `--model-type`: Model architecture type (default: attention_emotion_net)
+- `--dropout-rate`: Dropout rate (default: 0.4)
+- `--stochastic-depth`: Enable stochastic depth
+- `--epochs`: Number of training epochs
+- `--batch-size`: Batch size
+- `--lr`: Initial learning rate
+- `--max-lr`: Maximum learning rate for OneCycleLR
+- `--data-dir`: Data directory for FER2013
+- `--ferplus-dir`: Directory for FERPlus dataset
+- `--ferplus-mode`: FERPlus label mode (majority, probability, multi_target)
 
-- **Model**: Enhanced EmotionNet with EfficientNet backbone
-- **Input Size**: 48x48 grayscale images
-- **Batch Size**: 32 (Effective: 64 with gradient accumulation)
-- **Learning Rate**: 0.005 → 0.01 (OneCycleLR)
-- **Epochs**: 300
-- **Optimizer**: SAM (ρ=0.05)
-- **Loss**: Label Smoothing (0.1)
-- **Augmentation**: MixUp, CutMix, RandAugment, Class-specific
+For the full list of options:
 
-## Results Target
-
-- **Goal**: Beat ResEmoteNet's 79% SOTA accuracy on FER2013
-- **Features**: All state-of-the-art techniques for emotion recognition
-- **Architecture**: Multi-scale attention with advanced optimization
-
-## Training Progress
-
-The training will automatically:
-1. Clean previous artifacts
-2. Load optimized configuration
-3. Create enhanced model with attention mechanisms
-4. Apply advanced training techniques (SAM, OneCycleLR, etc.)
-5. Use sophisticated augmentation strategies
-6. Save best checkpoints with TTA validation
-7. Report progress toward 79%+ target
-
-## Key Improvements
-
-1. **Simplified Architecture**: Removed redundant code, kept only the best configuration
-2. **Optimized Training**: SAM optimizer + OneCycleLR for superior convergence
-3. **Advanced Augmentation**: Class-specific strategies for better balance
-4. **Clean Codebase**: Maintainable, well-documented structure
-5. **SOTA Target**: All features aimed at beating 79% accuracy
-
-## Usage Examples
-
-### Basic Training
-```python
-from main import main
-best_metrics = main()
-print(f"Best accuracy: {best_metrics['val_acc']:.2f}%")
+```bash
+python train.py --help
 ```
 
-### Custom Configuration
-```python
-from config import get_config
-from trainer import Trainer
-from emotion_model import create_emotion_model
+### Evaluation
 
-config = get_config()
-config['epochs'] = 500  # Extend training
-model = create_emotion_model()
-trainer = Trainer(model, device, config)
+The model will be automatically evaluated on the validation set during training.
+
+## Customization
+
+To modify the model architecture:
+
+1. Edit `emotionnet/models/attention_emotion_net.py`
+2. Adjust hyperparameters in `train.py`
+
+## Citation
+
+If you use this model in your research, please cite:
+
 ```
-
-## Requirements
-
-- Python 3.8+
-- PyTorch 1.12+
-- timm (for EfficientNet backbone)
-- Other dependencies in requirements.txt
-
-## License
-
-This project is optimized for academic and research use in emotion recognition. 
+@misc{EmotionNet,
+  author = {Your Name},
+  title = {EmotionNet: Attention-Based Facial Emotion Recognition},
+  year = {2023},
+  publisher = {GitHub},
+  howpublished = {\url{https://github.com/yourusername/EmotionNet}}
+}
+``` 

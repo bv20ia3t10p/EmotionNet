@@ -1,34 +1,22 @@
 """
-Utility Functions and Constants for EmotionNet
-Contains helper functions, constants, and utility classes
+Helper functions for EmotionNet.
+
+Contains utility functions for model management, device handling, and other common tasks.
 """
 
 import torch
 import numpy as np
 import random
 import os
+import json
+import datetime
 from typing import Dict, Any
 
-# Local constants (moved from deleted constants.py)
-EMOTION_MAP = {i: label for i, label in enumerate(['Angry', 'Disgust', 'Fear', 'Happy', 'Sad', 'Surprise', 'Neutral'])}
-EMOTION_MAP_REVERSE = {label: i for label, i in EMOTION_MAP.items()}
-EMOTION_LABELS = ['Angry', 'Disgust', 'Fear', 'Happy', 'Sad', 'Surprise', 'Neutral']
-NUM_CLASSES = 7
-
-# Emotion colors for visualization (if needed)
-EMOTION_COLORS = {
-    'Angry': '#FF0000',      # Red
-    'Disgust': '#800080',    # Purple
-    'Fear': '#FFA500',       # Orange
-    'Happy': '#00FF00',      # Green
-    'Sad': '#0000FF',        # Blue
-    'Surprise': '#FFFF00',   # Yellow
-    'Neutral': '#808080'     # Gray
-}
+from .constants import EMOTION_LABELS
 
 
 def set_seed(seed: int = 42) -> None:
-    """Set random seeds for reproducibility"""
+    """Set random seeds for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -40,7 +28,7 @@ def set_seed(seed: int = 42) -> None:
 
 
 def count_parameters(model: torch.nn.Module) -> Dict[str, int]:
-    """Count total and trainable parameters in a model"""
+    """Count total and trainable parameters in a model."""
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
@@ -51,23 +39,8 @@ def count_parameters(model: torch.nn.Module) -> Dict[str, int]:
     }
 
 
-def format_time(seconds: float) -> str:
-    """Format time in seconds to human readable format"""
-    if seconds < 60:
-        return f"{seconds:.1f}s"
-    elif seconds < 3600:
-        minutes = seconds // 60
-        seconds = seconds % 60
-        return f"{int(minutes)}m {seconds:.1f}s"
-    else:
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        seconds = seconds % 60
-        return f"{int(hours)}h {int(minutes)}m {seconds:.1f}s"
-
-
 def get_device() -> torch.device:
-    """Get the best available device"""
+    """Get the best available device."""
     if torch.cuda.is_available():
         device = torch.device('cuda')
         print(f"Using GPU: {torch.cuda.get_device_name()}")
@@ -80,7 +53,7 @@ def get_device() -> torch.device:
 
 
 def print_model_summary(model: torch.nn.Module, input_size: tuple = (1, 1, 64, 64)) -> None:
-    """Print a summary of the model architecture"""
+    """Print a summary of the model architecture."""
     param_info = count_parameters(model)
     
     print("\n" + "="*60)
@@ -101,10 +74,7 @@ def print_model_summary(model: torch.nn.Module, input_size: tuple = (1, 1, 64, 6
 
 
 def save_training_info(config: Dict[str, Any], save_dir: str) -> None:
-    """Save training information and configuration"""
-    import json
-    import datetime
-    
+    """Save training information and configuration."""
     training_info = {
         'timestamp': datetime.datetime.now().isoformat(),
         'config': config,
@@ -125,8 +95,59 @@ def save_training_info(config: Dict[str, Any], save_dir: str) -> None:
     print(f"Training info saved to: {info_file}")
 
 
+def calculate_class_weights(class_counts: np.ndarray, method: str = 'balanced') -> np.ndarray:
+    """Calculate class weights for handling class imbalance."""
+    if method == 'balanced':
+        # Standard sklearn balanced approach
+        n_samples = np.sum(class_counts)
+        n_classes = len(class_counts)
+        weights = n_samples / (n_classes * class_counts)
+    elif method == 'inverse':
+        # Simple inverse frequency
+        weights = 1.0 / class_counts
+        weights = weights / np.sum(weights) * len(weights)
+    elif method == 'sqrt':
+        # Square root of inverse frequency (less aggressive)
+        weights = 1.0 / np.sqrt(class_counts)
+        weights = weights / np.sum(weights) * len(weights)
+    else:
+        raise ValueError(f"Unknown method: {method}")
+    
+    return weights
+
+
+def print_class_distribution(class_counts: np.ndarray, class_names: list = None) -> None:
+    """Print class distribution statistics."""
+    if class_names is None:
+        class_names = EMOTION_LABELS
+    
+    total = np.sum(class_counts)
+    
+    print("\nClass Distribution:")
+    print("-" * 40)
+    for i, (name, count) in enumerate(zip(class_names, class_counts)):
+        percentage = (count / total) * 100
+        print(f"{name:>10}: {count:>6} ({percentage:>5.1f}%)")
+    print("-" * 40)
+    print(f"{'Total':>10}: {total:>6} (100.0%)")
+    
+    # Calculate imbalance ratio
+    max_count = np.max(class_counts)
+    min_count = np.min(class_counts)
+    imbalance_ratio = max_count / min_count
+    print(f"Imbalance Ratio: {imbalance_ratio:.2f}:1")
+
+
+def get_lr(optimizer: torch.optim.Optimizer) -> float:
+    """Get current learning rate from optimizer."""
+    for param_group in optimizer.param_groups:
+        return param_group['lr']
+    return 0.0
+
+
 class EarlyStopping:
-    """Early stopping utility class"""
+    """Early stopping utility class."""
+    
     def __init__(self, patience: int = 10, min_delta: float = 0.001, restore_best_weights: bool = True):
         self.patience = patience
         self.min_delta = min_delta
@@ -137,7 +158,7 @@ class EarlyStopping:
         
     def __call__(self, score: float, model: torch.nn.Module) -> bool:
         """
-        Check if training should stop
+        Check if training should stop.
         
         Args:
             score: Current validation score (higher is better)
@@ -162,54 +183,4 @@ class EarlyStopping:
             if self.restore_best_weights:
                 self.best_weights = model.state_dict().copy()
         
-        return False
-
-
-def calculate_class_weights(class_counts: np.ndarray, method: str = 'balanced') -> np.ndarray:
-    """Calculate class weights for handling class imbalance"""
-    if method == 'balanced':
-        # Standard sklearn balanced approach
-        n_samples = np.sum(class_counts)
-        n_classes = len(class_counts)
-        weights = n_samples / (n_classes * class_counts)
-    elif method == 'inverse':
-        # Simple inverse frequency
-        weights = 1.0 / class_counts
-        weights = weights / np.sum(weights) * len(weights)
-    elif method == 'sqrt':
-        # Square root of inverse frequency (less aggressive)
-        weights = 1.0 / np.sqrt(class_counts)
-        weights = weights / np.sum(weights) * len(weights)
-    else:
-        raise ValueError(f"Unknown method: {method}")
-    
-    return weights
-
-
-def print_class_distribution(class_counts: np.ndarray, class_names: list = None) -> None:
-    """Print class distribution statistics"""
-    if class_names is None:
-        class_names = EMOTION_LABELS
-    
-    total = np.sum(class_counts)
-    
-    print("\nClass Distribution:")
-    print("-" * 40)
-    for i, (name, count) in enumerate(zip(class_names, class_counts)):
-        percentage = (count / total) * 100
-        print(f"{name:>10}: {count:>6} ({percentage:>5.1f}%)")
-    print("-" * 40)
-    print(f"{'Total':>10}: {total:>6} (100.0%)")
-    
-    # Calculate imbalance ratio
-    max_count = np.max(class_counts)
-    min_count = np.min(class_counts)
-    imbalance_ratio = max_count / min_count
-    print(f"Imbalance Ratio: {imbalance_ratio:.2f}:1")
-
-
-def get_lr(optimizer: torch.optim.Optimizer) -> float:
-    """Get current learning rate from optimizer"""
-    for param_group in optimizer.param_groups:
-        return param_group['lr']
-    return 0.0 
+        return False 

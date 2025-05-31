@@ -1,6 +1,7 @@
 """
-Advanced Attention Mechanisms for EmotionNet
-Contains all attention modules used in the custom ResEmoteNet architecture
+Contains attention modules used in the EmotionNet architecture.
+
+Implements various attention mechanisms for focusing on important features.
 """
 
 import torch

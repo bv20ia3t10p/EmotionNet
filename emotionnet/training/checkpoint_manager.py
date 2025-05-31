@@ -1,6 +1,6 @@
 """
 Checkpoint management for EmotionNet training.
-Handles saving and loading model checkpoints and training history.
+Handles saving model checkpoints and training history.
 """
 
 import os
@@ -13,15 +13,35 @@ from typing import Dict, Any, Optional
 class CheckpointManager:
     """Manages model checkpoints and training history."""
     
-    def __init__(self, save_dir: str = 'checkpoints'):
-        self.save_dir = save_dir
-        self.epoch_stats_dir = os.path.join(save_dir, 'epoch_stats')
+    def __init__(self, output_dir, model=None, optimizer=None, scheduler=None, ema_model=None, 
+                best_metric='accuracy', save_dir=None):
+        """
+        Initialize the checkpoint manager.
+        
+        Args:
+            output_dir: Directory to save checkpoints and stats
+            model: The model to checkpoint
+            optimizer: The optimizer
+            scheduler: The learning rate scheduler
+            ema_model: Exponential moving average model (optional)
+            best_metric: Metric to track for best model ('accuracy' or 'f1')
+            save_dir: Legacy parameter, use output_dir instead
+        """
+        self.save_dir = output_dir if save_dir is None else save_dir
+        self.epoch_stats_dir = os.path.join(self.save_dir, 'epoch_stats')
         self.best_val_acc = 0.0
         self.best_val_f1 = 0.0
         self.best_epoch = 0
         
+        # Store model references
+        self.model = model
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.ema_model = ema_model
+        self.best_metric = best_metric
+        
         # Create directories
-        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(self.save_dir, exist_ok=True)
         os.makedirs(self.epoch_stats_dir, exist_ok=True)
     
     def save_epoch_stats(self, epoch: int, train_metrics: Dict[str, Any], 
@@ -45,26 +65,48 @@ class CheckpointManager:
         with open(stats_file, 'w') as f:
             json.dump(epoch_stats, f, indent=2)
     
-    def save_checkpoint(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-                       scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
-                       epoch: int, val_metrics: Dict[str, Any], config: Dict[str, Any],
-                       is_best: bool = False) -> bool:
-        """Save model checkpoint."""
+    def save_checkpoint(self, epoch, model, optimizer, scheduler=None, metrics=None, is_best=False):
+        """
+        Save model checkpoint.
+        
+        Supports both standard interface and compatibility interface.
+        """
+        # Use provided instances or fall back to stored instances
+        model = model if model is not None else self.model
+        optimizer = optimizer if optimizer is not None else self.optimizer
+        scheduler = scheduler if scheduler is not None else self.scheduler
+        ema_model = self.ema_model
+        
+        if model is None:
+            raise ValueError("No model provided for checkpoint saving")
+            
+        # Extract metrics from val_metrics if provided
+        if metrics is not None:
+            val_acc = metrics.get('accuracy', 0.0)
+            val_f1 = metrics.get('f1_score', 0.0)
+        else:
+            val_f1 = 0.0
+            
+        # Create checkpoint dictionary
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
             'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
-            'val_acc': val_metrics['accuracy'],
-            'val_f1': val_metrics['f1_score'],
-            'config': config
+            'val_acc': val_acc,
+            'val_f1': val_f1,
+            'best_val_acc': self.best_val_acc
         }
         
+        # Add EMA model if it exists
+        if ema_model is not None:
+            checkpoint['ema_model_state_dict'] = ema_model.state_dict()
+            
         # Save best model
         if is_best:
             torch.save(checkpoint, os.path.join(self.save_dir, 'best_model.pth'))
-            self.best_val_acc = val_metrics['accuracy']
-            self.best_val_f1 = val_metrics['f1_score']
+            self.best_val_acc = val_acc
+            self.best_val_f1 = val_f1
             self.best_epoch = epoch
             return True
         
@@ -73,20 +115,6 @@ class CheckpointManager:
             torch.save(checkpoint, os.path.join(self.save_dir, f'checkpoint_epoch_{epoch}.pth'))
         
         return False
-    
-    def load_checkpoint(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-                       scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
-                       checkpoint_path: str) -> int:
-        """Load model checkpoint and return last epoch."""
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
-        
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        
-        if scheduler and checkpoint['scheduler_state_dict']:
-            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        
-        return checkpoint['epoch']
     
     def get_best_metrics(self) -> Dict[str, Any]:
         """Get best validation metrics."""
@@ -98,10 +126,13 @@ class CheckpointManager:
     
     def _serialize_metrics(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
         """Convert metrics to JSON-serializable format."""
+        if not metrics:
+            return {}
+            
         serialized = {
-            'loss': float(metrics['loss']),
-            'accuracy': float(metrics['accuracy']),
-            'f1_score': float(metrics['f1_score']),
+            'loss': float(metrics.get('loss', 0.0)),
+            'accuracy': float(metrics.get('accuracy', 0.0)),
+            'f1_score': float(metrics.get('f1_score', 0.0)),
             'per_class': {}
         }
         
