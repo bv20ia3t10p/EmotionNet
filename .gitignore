@@ -1,13 +1,162 @@
+# EmotionNet Project - .gitignore
+
+# Dataset files (large and should be downloaded separately)
+FERPlus-master/
 FERplus*/
-cache*/
+sample_dataset/
 sample_data*/
-*.pth*
-*.pt*
-*.pkl*
-*.pt*
-*.pkl*
-*.pth*
-*.pt*
-*.pkl*
-*.pt*
-*.pyc
+cache*/
+datas/*/  # Dataset directories
+!datas/README.md  # Keep README files
+
+# Model files and checkpoints
+*.pth
+*.pt
+*.pkl
+*.h5
+*.ckpt
+*.safetensors
+model_*.json
+checkpoint_*
+checkpoints/*/  # All checkpoint directories
+!checkpoints/README.md  # Keep README files
+training_history.json
+model_best.pth
+checkpoint.pth
+
+# dlib model files
+shape_predictor_*.dat
+shape_predictor_*.dat.bz2
+
+# Temporary files
+temp_*.csv
+temp_*.txt
+temp_*.json
+*.tmp
+
+# Training outputs and logs
+runs/
+logs/
+tensorboard_logs/
+wandb/
+*.log
+evaluation_results/
+comparison_results/
+training_plots/
+
+# Generated visualizations and outputs
+*.png
+*.jpg
+*.jpeg
+*.gif
+!README*.png
+!README*.jpg
+!*.jpg  # Allow specific landmark visualization images that are part of documentation
+landmark_regions_comparison.png
+test_landmarks_visualization.jpg
+real_image_landmarks_*.png
+confusion_matrix.png
+per_class_metrics.png
+training_curves.png
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+conda-env/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyTorch
+lightning_logs/
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# Environment variables
+.env.local
+.env.*.local
+
+# Coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Experiment tracking
+mlruns/
+.mlflow/
+
+*.csv
+
+# Keep important files
+!requirements.txt
+!requirements_minimal.txt
+!README.md
+!*.py
+!*.md
+!DLIB_USAGE_GUIDE.md
+!IMPLEMENTATION_STATUS.md
