@@ -1,195 +1,241 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from transformers import ViTModel, Swinv2Model
+import math
 
-class LightFaceNet(nn.Module):
-    def __init__(self, embed_dim=512):
-        super().__init__()
-        # Efficient channel progression
-        self.features = nn.Sequential(
-            # Initial conv with larger kernel for facial features
-            nn.Conv2d(3, 32, kernel_size=7, stride=2, padding=3),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(2),  # 56x56
-            
-            # Depthwise separable convs for efficiency
-            nn.Conv2d(32, 32, kernel_size=3, padding=1, groups=32),
-            nn.Conv2d(32, 64, kernel_size=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.MaxPool2d(2),  # 28x28
-            
-            nn.Conv2d(64, 64, kernel_size=3, padding=1, groups=64),
-            nn.Conv2d(64, 128, kernel_size=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.MaxPool2d(2),  # 14x14
-            
-            nn.Conv2d(128, 128, kernel_size=3, padding=1, groups=128),
-            nn.Conv2d(128, 256, kernel_size=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((7, 7))  # 7x7
-        )
-        
-        # Project to embedding dimension
-        self.projection = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(256 * 7 * 7, embed_dim),
-            nn.LayerNorm(embed_dim),
-            nn.ReLU(),
-            nn.Dropout(0.2)
-        )
-        
-    def forward(self, x):
-        x = self.features(x)
-        x = self.projection(x)
-        return x
-
-class GeometryAwareAttention(nn.Module):
+class MultiScaleFeatureExtraction(nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
-        self.query = nn.Linear(dim, dim)
-        self.key = nn.Linear(dim, dim)
-        self.value = nn.Linear(dim, dim)
-        self.scale = dim ** -0.5
+        reduced_dim = dim // 4  # For ViT-Base: 768 // 4 = 192
+        
+        # Convolutions with correct dimensions
+        self.conv1 = nn.Conv2d(768, reduced_dim, kernel_size=3, padding=1)  # Fixed input channels to 768
+        self.conv3 = nn.Conv2d(768, reduced_dim, kernel_size=5, padding=2)  # Fixed input channels to 768
+        
+        self.norm = nn.LayerNorm(reduced_dim * 2)
+        self.proj = nn.Linear(reduced_dim * 2, 768)  # Project back to 768
+        
+        # Initialize weights with smaller values
+        nn.init.kaiming_normal_(self.conv1.weight, mode='fan_out', nonlinearity='relu', a=0.1)
+        nn.init.kaiming_normal_(self.conv3.weight, mode='fan_out', nonlinearity='relu', a=0.1)
+        nn.init.zeros_(self.conv1.bias)
+        nn.init.zeros_(self.conv3.bias)
         
     def forward(self, x):
-        # x shape: [B, L, D]
-        B, L, D = x.shape
+        B, N, C = x.shape
+        # Remove CLS token and reshape
+        x_cls = x[:, 0:1, :]  # Get CLS token
+        x_patch = x[:, 1:, :]  # Remove CLS token
+        H = W = int(math.sqrt(N - 1))  # -1 for CLS token
+        x_patch = x_patch.transpose(1, 2).reshape(B, C, H, W)
         
-        # Compute Q, K, V
-        q = self.query(x)  # [B, L, D]
-        k = self.key(x)    # [B, L, D]
-        v = self.value(x)  # [B, L, D]
+        # Multi-scale feature extraction
+        x1 = self.conv1(x_patch)
+        x3 = self.conv3(x_patch)
         
-        # Compute attention scores
-        attn = (q @ k.transpose(-2, -1)) * self.scale  # [B, L, L]
-        attn = F.softmax(attn, dim=-1)
+        # Combine features
+        x_combined = torch.cat([x1, x3], dim=1)  # B, 2*reduced_dim, H, W
+        x_combined = x_combined.flatten(2).transpose(1, 2)  # B, HW, 2*reduced_dim
+        x_combined = self.norm(x_combined)
+        x_combined = self.proj(x_combined)  # B, HW, 768
         
-        # Apply attention
-        out = attn @ v  # [B, L, D]
-        
-        return out
+        # Reattach CLS token
+        x = torch.cat([x_cls, x_combined], dim=1)
+        return x
 
-class ReliabilityBalancingModule(nn.Module):
-    def __init__(self, dim, num_anchors=10):
+class HierarchicalAttention(nn.Module):
+    def __init__(self, dim=768):  # Default to ViT-Base dim
+        super().__init__()
+        num_heads = 12  # ViT-Base uses 12 heads
+        assert dim % num_heads == 0, f"dim {dim} should be divisible by num_heads {num_heads}"
+        self.dim = dim
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+        
+        # Single efficient attention mechanism
+        self.qkv = nn.Linear(768, 768 * 3)  # Fixed dimensions to 768
+        self.proj = nn.Linear(768, 768)
+        
+        # Lightweight feature refinement
+        self.refine = nn.Sequential(
+            nn.LayerNorm(768),
+            nn.Linear(768, 768),
+            nn.GELU(),
+            nn.Dropout(0.1)
+        )
+        
+        # Initialize weights with smaller values
+        nn.init.kaiming_normal_(self.qkv.weight, mode='fan_out', nonlinearity='relu', a=0.1)
+        nn.init.zeros_(self.qkv.bias)
+        nn.init.kaiming_normal_(self.proj.weight, mode='fan_out', nonlinearity='relu', a=0.1)
+        nn.init.zeros_(self.proj.bias)
+        
+        self.drop = nn.Dropout(0.1)
+        
+    def forward(self, x):
+        B, N, C = x.shape
+        
+        # Unified attention
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = F.softmax(attn, dim=-1)
+        attn = self.drop(attn)
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        
+        # Simple refinement
+        x = x + self.refine(x)
+        return x
+
+class AdaptiveReliabilityModule(nn.Module):
+    def __init__(self, num_anchors=10, num_classes=8):
         super().__init__()
         self.num_anchors = num_anchors
-        self.anchors = nn.Parameter(torch.randn(num_anchors, dim))
-        self.center_weight = 0.1
+        self.num_classes = num_classes
+        dim = 768  # Fixed to ViT-Base dimension
+        reduced_dim = dim // 2  # 384
+        
+        # Initialize anchors with smaller values
+        self.register_buffer('temperature', torch.ones(1) * 0.1)  # Reduced temperature
+        self.anchors = nn.Parameter(torch.randn(num_anchors, reduced_dim).div_(reduced_dim))  # Reduced initialization scale
+        
+        # Efficient confidence estimation
+        self.confidence_head = nn.Sequential(
+            nn.LayerNorm(768),
+            nn.Linear(768, reduced_dim),
+            nn.GELU(),
+            nn.Linear(reduced_dim, 1),
+            nn.Sigmoid()
+        )
+        
+        # Initialize confidence head with smaller values
+        for m in self.confidence_head.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu', a=0.1)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+        
+        # Lightweight feature refinement
+        self.feature_refine = nn.Sequential(
+            nn.LayerNorm(768),
+            nn.Linear(768, reduced_dim),
+            nn.GELU(),
+            nn.Linear(reduced_dim, 768)
+        )
+        
+        # Initialize feature refinement with smaller values
+        for m in self.feature_refine.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu', a=0.1)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+        
+        # Projection for anchor comparison
+        self.proj = nn.Linear(768, reduced_dim)
+        nn.init.kaiming_normal_(self.proj.weight, mode='fan_out', nonlinearity='relu', a=0.1)
+        nn.init.zeros_(self.proj.bias)
         
     def forward(self, x, labels=None):
-        # Calculate distances to anchors
-        x_norm = F.normalize(x, dim=-1)
-        anchors_norm = F.normalize(self.anchors, dim=-1)
+        # Refine features with residual connection
+        x_refined = x + self.feature_refine(x)
         
-        # Compute similarity scores
-        similarity = x_norm @ anchors_norm.T  # Range: [-1, 1]
-        similarity = (similarity + 1) / 2      # Range: [0, 1]
+        # Project to reduced dimension for anchor comparison
+        x_proj = self.proj(x_refined)
         
-        # If in training mode and labels are provided
+        # Normalize features and anchors
+        x_norm = F.normalize(x_proj, dim=-1, eps=1e-8)
+        anchors_norm = F.normalize(self.anchors, dim=-1, eps=1e-8)
+        
+        # Compute anchor similarities with temperature scaling
+        similarities = torch.matmul(x_norm, anchors_norm.t()) / torch.clamp(self.temperature, min=0.01)
+        similarities = torch.clamp(similarities, min=-10, max=10)
+        
+        # Estimate confidence
+        confidence = self.confidence_head(x_refined)
+        confidence = torch.clamp(confidence, min=0.1, max=0.9)
+        
         if self.training and labels is not None:
-            # Center loss computation
+            # Simplified center loss computation
+            center_loss = torch.tensor(0.0, device=x.device, dtype=x.dtype)
             unique_labels = torch.unique(labels)
-            centers = []
-            for i in unique_labels:
-                mask = (labels == i)
-                if mask.sum() > 0:
-                    centers.append(x[mask].mean(0))
             
-            if len(centers) > 0:
-                centers = torch.stack(centers)
-                label_indices = torch.zeros_like(labels, dtype=torch.long, device=x.device)
-                for idx, label in enumerate(unique_labels):
-                    label_indices[labels == label] = idx
-                center_loss = ((x - centers[label_indices]) ** 2).mean()
-            else:
-                center_loss = torch.tensor(0.0, device=x.device)
-                
-            return similarity, self.center_weight * center_loss
-        return similarity, None
+            for label in unique_labels:
+                mask = (labels == label)
+                if mask.sum() > 0:
+                    class_features = x_proj[mask]
+                    class_center = class_features.mean(0, keepdim=True)
+                    class_features = F.normalize(class_features, dim=-1, eps=1e-8)
+                    class_center = F.normalize(class_center, dim=-1, eps=1e-8)
+                    center_loss += (1 - (class_features * class_center).sum(dim=1)).mean()
+            
+            center_loss = torch.clamp(center_loss, min=0.0, max=10.0)
+            weighted_similarities = similarities * confidence
+            return weighted_similarities, center_loss
+        
+        return similarities, None
 
-class GReFEL(nn.Module):
-    def __init__(self, num_classes=8, num_anchors=10, embed_dim=512):
+class EnhancedGReFEL(nn.Module):
+    def __init__(self, num_classes=8, num_anchors=10):  # Removed embed_dim parameter
         super().__init__()
         
-        # Lightweight CNN backbone
-        self.backbone = LightFaceNet(embed_dim=embed_dim)
-        
-        # Geometry-aware attention with multi-scale processing
-        self.geometry_attention = nn.ModuleList([
-            GeometryAwareAttention(embed_dim),
-            GeometryAwareAttention(embed_dim),
-            GeometryAwareAttention(embed_dim)
-        ])
-        
-        # Feature fusion
-        self.fusion = nn.Sequential(
-            nn.Linear(embed_dim * 3, embed_dim),
-            nn.LayerNorm(embed_dim),
-            nn.ReLU(),
-            nn.Dropout(0.3)
+        # Use ViT-Base backbone
+        self.backbone = ViTModel.from_pretrained(
+            'google/vit-base-patch16-224',
+            add_pooling_layer=False,
+            output_hidden_states=True
         )
         
-        # Reliability balancing module
-        self.reliability_module = ReliabilityBalancingModule(embed_dim, num_anchors=num_anchors)
+        # Enable gradient checkpointing
+        self.backbone.gradient_checkpointing_enable()
         
-        # Enhanced classification head
+        # Feature processing
+        self.multiscale = MultiScaleFeatureExtraction(dim=768)  # Fixed to ViT-Base dim
+        
+        # Single hierarchical attention layer
+        self.attention = HierarchicalAttention()  # Uses default 768
+        
+        # Adaptive reliability module
+        self.reliability_module = AdaptiveReliabilityModule(num_anchors, num_classes)
+        
+        # Efficient classifier
         self.classifier = nn.Sequential(
-            nn.LayerNorm(embed_dim),
-            nn.Linear(embed_dim, embed_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.LayerNorm(embed_dim // 2),
-            nn.Linear(embed_dim // 2, num_classes)
+            nn.LayerNorm(768),
+            nn.Linear(768, num_classes)
         )
-        
-        # Loss weights
-        self.lambda_cls = 1.0    # Classification loss weight
-        self.lambda_a = 0.1      # Anchor loss weight
-        self.lambda_c = 0.1      # Center loss weight
         
     def forward(self, x, labels=None):
-        # Get CNN features
-        x = self.backbone(x)  # [B, embed_dim]
+        # Extract features from backbone
+        outputs = self.backbone(x)
+        features = outputs.last_hidden_state  # Will be [B, 197, 768]
         
-        # Multi-scale geometry-aware attention
-        B = x.shape[0]
-        x_list = []
-        x_unsqueeze = x.unsqueeze(1)  # [B, 1, embed_dim]
+        # Process features
+        x = self.multiscale(features)
+        x = self.attention(x)
         
-        for attn in self.geometry_attention:
-            x_att = attn(x_unsqueeze)  # [B, 1, embed_dim]
-            x_list.append(x_att.squeeze(1))  # [B, embed_dim]
+        # Get CLS token
+        x_cls = x[:, 0]
         
-        # Feature fusion
-        x_cat = torch.cat(x_list, dim=-1)  # [B, embed_dim * 3]
-        x = self.fusion(x_cat)  # [B, embed_dim]
+        # Reliability balancing
+        similarities, center_loss = self.reliability_module(x_cls, labels)
         
-        # Apply reliability balancing
-        anchor_similarities, center_loss = self.reliability_module(x, labels)
-        
-        # Get classification logits
-        logits = self.classifier(x)
+        # Classification
+        logits = self.classifier(x_cls)
         
         if self.training and labels is not None:
-            # Calculate losses with label smoothing
+            # Classification loss with label smoothing
             cls_loss = F.cross_entropy(logits, labels, label_smoothing=0.1)
             
-            # Safer anchor loss calculation
-            eps = 1e-7
-            anchor_loss = -torch.log(anchor_similarities.max(dim=1)[0].clamp(min=eps)).mean()
+            # Reliability loss
+            rel_loss = -torch.log(similarities.max(dim=1)[0]).mean()
             
-            # Combine losses with proper scaling
-            total_loss = (
-                self.lambda_cls * cls_loss +
-                self.lambda_a * anchor_loss +
-                self.lambda_c * (center_loss if center_loss is not None else 0.0)
-            )
+            # Total loss
+            total_loss = cls_loss + 0.1 * rel_loss + 0.1 * center_loss
             
             return logits, total_loss
         
-        return logits 
+        return logits, None 

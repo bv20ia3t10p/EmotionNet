@@ -43,26 +43,54 @@ class FERPlusDataset(Dataset):
         if transform is None:
             if train:
                 self.transform = A.Compose([
-                    A.Resize(112, 112),
-                    A.HorizontalFlip(p=0.5),
+                    A.Resize(224, 224),  # Required size for ViT
+                    A.HorizontalFlip(p=0.5),  # Mirror faces - safe augmentation
+                    # Gentle brightness/contrast adjustments
                     A.OneOf([
-                        A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
-                        A.RandomGamma(gamma_limit=(80, 120), p=1.0),
-                    ], p=0.5),
+                        A.RandomBrightnessContrast(
+                            brightness_limit=0.1,  # Reduced from 0.2
+                            contrast_limit=0.1,    # Reduced from 0.2
+                            p=1.0
+                        ),
+                        A.RandomGamma(
+                            gamma_limit=(90, 110),  # More conservative gamma range
+                            p=1.0
+                        ),
+                    ], p=0.3),  # Reduced probability
+                    # Subtle noise/blur - preserves features
                     A.OneOf([
-                        A.GaussNoise(per_channel=True, p=1.0),
-                        A.GaussianBlur(blur_limit=(3, 5), p=1.0),
-                    ], p=0.3),
+                        A.GaussNoise(
+                            p=0.25
+                        ),
+                        A.GaussianBlur(
+                            blur_limit=(3, 3),  # Fixed small kernel
+                            p=1.0
+                        ),
+                    ], p=0.2),
+                    # Very mild geometric transforms
                     A.OneOf([
-                        A.CoarseDropout(p=0.5),
-                        A.GridDistortion(num_steps=5, distort_limit=0.2, p=1.0),
-                    ], p=0.3),
+                        A.Affine(
+                            translate_percent=(-0.05, 0.05),  # Small shifts only
+                            scale=(-0.05, 0.05),             # Minimal scaling
+                            rotate=(-10, 10),                # Limited rotation
+                            shear=(-5, 5),                   # Mild shear
+                            interpolation=cv2.INTER_LINEAR,  # Better interpolation
+                            p=1.0
+                        ),
+                        A.GridDistortion(
+                            num_steps=5,
+                            distort_limit=0.1,     # Reduced distortion
+                            border_mode=cv2.BORDER_CONSTANT,
+                            p=1.0
+                        ),
+                    ], p=0.2),  # Reduced probability
+                    # ImageNet normalization
                     A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                     ToTensorV2(),
                 ])
             else:
                 self.transform = A.Compose([
-                    A.Resize(112, 112),
+                    A.Resize(224, 224),
                     A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                     ToTensorV2(),
                 ])
@@ -84,7 +112,7 @@ class FERPlusDataset(Dataset):
         img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             # If image reading fails, create a blank image
-            img = np.zeros((48, 48), dtype=np.uint8)
+            img = np.zeros((224, 224), dtype=np.uint8)
         
         # Convert to 3 channels
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
