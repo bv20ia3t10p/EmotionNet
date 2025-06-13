@@ -1,23 +1,25 @@
-# EmotionNet: Facial Expression Recognition with GReFEL and GReFEL++
+# EmotionNet: Facial Expression Recognition with GReFEL
 
-This repository contains implementations of two state-of-the-art facial expression recognition models:
-1. GReFEL (Geometry-Aware Reliable Facial Expression Learning)
-2. GReFEL++ (An enhanced version with additional improvements)
+This repository contains an implementation of GReFEL (Geometry-Aware Reliable Facial Expression Learning) for facial expression recognition.
 
 ## Features
 
-### GReFEL
-- Vision Transformer backbone
+### GReFEL Architecture
+- Multi-scale Window-Based Cross-Attention ViT with 3 scales:
+  - Low-level (local): 28×28 patches
+  - Mid-level: 14×14 patches
+  - High-level (global): 7×7 patches
+- IR50 backbone pretrained on Ms-Celeb-1M
+- MobileFaceNet backbone for landmarks
 - Geometry-aware anchor-based feature learning
 - Reliability balancing module
-- Label smoothing and center loss
 
-### GReFEL++ Improvements
-- Adaptive geometry module with positional encoding
-- Multi-scale attention mechanism
-- Hierarchical reliability module with confidence estimation
-- Enhanced loss function with focal loss and confidence regularization
-- Larger ViT backbone (ViT-Large)
+### Loss Functions
+Total loss is composed of:
+- L_cls: Classification loss (cross-entropy)
+- L_a: Anchor loss for discriminative features
+- L_c: Center loss for class compactness
+All loss components have equal weighting (λ=1.0)
 
 ## Installation
 
@@ -60,63 +62,47 @@ data/
 
 ## Training
 
-### Training GReFEL
+### Training Settings
+
+#### FERPlus Dataset
+- Batch size: 32
+- Initial learning rate: 0.0001 (1e-4)
+- ADAM optimizer with weight decay 0.01
+- Train for 100 epochs
+- Data augmentation:
+  - Resize to 256×256
+  - Random crop to 224×224
+  - Random rotation (±30°)
+  - Color jittering (0.4)
+  - Random shear (±15°)
+  - Random perspective (0.3)
+
+#### Other Datasets (RAF-DB, FER2013)
+- Batch size: 500 images per class
+- Initial learning rate: 0.0003
+- ADAM optimizer with exponential decay (γ=0.995)
+- Train for 1000 epochs
+
+### Training Command
 
 ```bash
 python train.py \
     --dataset ferplus \
     --data_dir data/ferplus \
-    --batch_size 32 \
-    --num_epochs 50 \
-    --lr 1e-4 \
+    --num_epochs 1000 \
+    --lr 3e-4 \
     --num_classes 8 \
     --num_anchors 10 \
     --smoothing 0.11
 ```
 
-### Training GReFEL++
+## Expected Performance
 
-```bash
-python train_plus.py \
-    --dataset ferplus \
-    --data_dir data/ferplus \
-    --batch_size 32 \
-    --num_epochs 50 \
-    --lr 5e-5 \
-    --num_classes 8 \
-    --num_anchors 10 \
-    --num_heads 8 \
-    --smoothing 0.11 \
-    --temperature 1.0 \
-    --backbone vit_large_patch16_224
-```
-
-## Model Architecture
-
-### GReFEL
-- Backbone: ViT-Base (768 dimensions)
-- Geometry Module: 10 learnable anchors
-- Reliability Module: Label smoothing (0.11)
-
-### GReFEL++
-- Backbone: ViT-Large (1024 dimensions)
-- Adaptive Geometry Module:
-  - Positional encoding
-  - Multi-scale attention (8 heads)
-  - Dynamic weighting
-- Hierarchical Reliability Module:
-  - Global and local feature paths
-  - Confidence estimation
-  - Temperature scaling
-
-## Results
-
-Expected performance on different datasets:
-
-| Model    | FERPlus | RAF-DB | FER2013 |
-|----------|---------|--------|----------|
-| GReFEL   | 89.2%   | 88.7%  | 75.1%   |
-| GReFEL++ | 91.5%   | 90.3%  | 77.8%   |
+| Dataset  | Accuracy |
+|----------|----------|
+| FERPlus  | 89.2%    |
+| RAF-DB   | 88.7%    |
+| FER2013  | 75.1%    |
 
 ## Citation
 

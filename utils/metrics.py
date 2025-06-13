@@ -3,7 +3,17 @@ import json
 import torch
 import numpy as np
 from typing import Dict, List, Tuple
-from sklearn.metrics import f1_score, confusion_matrix
+from sklearn.metrics import f1_score, confusion_matrix as sklearn_confusion_matrix
+
+def accuracy_score(y_true, y_pred):
+    """Calculate accuracy score."""
+    return (np.array(y_true) == np.array(y_pred)).mean()
+
+def confusion_matrix(y_true, y_pred, num_classes=None):
+    """Calculate confusion matrix."""
+    if num_classes is None:
+        num_classes = max(max(y_true), max(y_pred)) + 1
+    return sklearn_confusion_matrix(y_true, y_pred, labels=list(range(num_classes)))
 
 class MetricsTracker:
     def __init__(
@@ -77,8 +87,9 @@ class MetricsTracker:
         return current_val_acc >= self.history["best_val_acc"]
 
 class BatchMetricsAggregator:
-    def __init__(self, num_classes: int):
+    def __init__(self, num_classes: int, class_names: List[str] = None):
         self.num_classes = num_classes
+        self.class_names = class_names or [f"class_{i}" for i in range(num_classes)]
         self.reset()
         
     def reset(self):
@@ -113,7 +124,7 @@ class BatchMetricsAggregator:
             'accuracy': accuracy,
             'f1_macro': f1_macro,
             'f1_per_class': {
-                f'class_{i}': f1_per_class[i]
-                for i in range(self.num_classes)
+                name: f1_per_class[i]
+                for i, name in enumerate(self.class_names)
             }
         } 

@@ -132,7 +132,6 @@ class HierarchicalReliabilityModule(nn.Module):
         global_logits = self.global_head(global_features)  # [B, C]
         
         # Local features with attention
-        # Reshape attention and features for matrix multiplication
         attention_weights = attention_weights.unsqueeze(2)  # [B, K, 1]
         features_expanded = features.unsqueeze(1)  # [B, 1, D]
         features_expanded = features_expanded.expand(-1, attention_weights.size(1), -1)  # [B, K, D]
@@ -149,14 +148,10 @@ class HierarchicalReliabilityModule(nn.Module):
         confidence = self.confidence_net(features)  # [B, 1]
         
         # Combine predictions with confidence weighting
-        combined_logits = confidence * global_logits + (1 - confidence) * local_logits  # [B, C]
+        logits = confidence * global_logits + (1 - confidence) * local_logits  # [B, C]
+        logits = logits / self.temperature  # Apply temperature scaling
         
-        # Apply temperature scaling and label smoothing
-        probabilities = F.softmax(combined_logits / self.temperature, dim=-1)  # [B, C]
-        uniform = torch.ones_like(probabilities) / probabilities.size(-1)  # [B, C]
-        smooth_probabilities = (1 - self.smoothing) * probabilities + self.smoothing * uniform  # [B, C]
-        
-        return smooth_probabilities, confidence
+        return logits, confidence
 
 class GReFELPlusPlus(nn.Module):
     def __init__(
@@ -215,6 +210,7 @@ class GReFELPlusPlus(nn.Module):
 class GReFELPlusPlusLoss(nn.Module):
     def __init__(
         self,
+        num_classes: int,
         alpha: float = 0.4,
         beta: float = 0.2,
         gamma: float = 2.0
@@ -223,24 +219,38 @@ class GReFELPlusPlusLoss(nn.Module):
         self.alpha = alpha
         self.beta = beta
         self.gamma = gamma
-        self.ce = nn.CrossEntropyLoss()
+        
+        # Initialize class weights with sqrt scaling to reduce extreme values
+        class_freq = torch.tensor([36.71, 26.26, 12.50, 12.36, 8.63, 0.68, 2.28, 0.58])
+        class_weights = 1.0 / torch.sqrt(class_freq + 1e-6)  # sqrt to reduce extreme weights
+        class_weights = class_weights / class_weights.sum() * num_classes  # Normalize
+        self.class_weights = nn.Parameter(class_weights, requires_grad=False)
+        
+        # Separate loss functions for better stability
+        self.ce = nn.CrossEntropyLoss(weight=self.class_weights)
+        self.ce_no_weight = nn.CrossEntropyLoss(reduction='none')
         
     def forward(
         self,
-        probabilities: torch.Tensor,
+        logits: torch.Tensor,
         targets: torch.Tensor,
         geometry_loss: torch.Tensor,
         confidence: torch.Tensor
     ) -> torch.Tensor:
-        # Classification loss with focal weighting
-        ce_loss = self.ce(probabilities, targets)
-        pt = torch.exp(-ce_loss)
-        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+        # Weighted cross entropy loss
+        ce_loss = self.ce(logits, targets)
         
-        # Confidence regularization
-        conf_loss = -torch.mean(torch.log(confidence + 1e-6) * pt + 
-                              torch.log(1 - confidence + 1e-6) * (1 - pt))
+        # Focal loss with original CE (without class weights to prevent double weighting)
+        pt = torch.exp(-self.ce_no_weight(logits, targets))
+        focal_weight = ((1 - pt) ** self.gamma)
+        focal_loss = (focal_weight * self.ce_no_weight(logits, targets)).mean()
         
-        # Combine losses
-        total_loss = focal_loss + self.alpha * geometry_loss + self.beta * conf_loss
+        # Scale geometry loss more conservatively
+        scaled_geometry_loss = self.alpha * torch.clamp(geometry_loss, 0, 5)
+        
+        # Simpler confidence regularization
+        conf_reg = self.beta * (1 - confidence.mean())
+        
+        # Combine losses with emphasis on CE and focal
+        total_loss = 0.5 * (ce_loss + focal_loss) + scaled_geometry_loss + conf_reg
         return total_loss 

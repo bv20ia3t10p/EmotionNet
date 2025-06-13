@@ -3,8 +3,9 @@ import torch
 import argparse
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 from tqdm import tqdm
+import math
 
 from models.grefel_plus import GReFELPlusPlus, GReFELPlusPlusLoss
 from datasets.fer_datasets import FERPlusDataset, RAFDBDataset, FER2013Dataset
@@ -69,14 +70,26 @@ def validate(model, val_loader, criterion, device, metrics_aggregator):
     
     return metrics_aggregator.get_aggregated_metrics()
 
+def get_warmup_cosine_scheduler(optimizer, warmup_epochs, total_epochs, steps_per_epoch):
+    def lr_lambda(current_step):
+        current_epoch = current_step / steps_per_epoch
+        if current_epoch < warmup_epochs:
+            # Linear warmup
+            return float(current_epoch) / float(max(1, warmup_epochs))
+        # Cosine decay
+        progress = float(current_epoch - warmup_epochs) / float(max(1, total_epochs - warmup_epochs))
+        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+    return LambdaLR(optimizer, lr_lambda)
+
 def main():
     # Parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, required=True, choices=['ferplus', 'rafdb', 'fer2013'])
     parser.add_argument('--data_dir', type=str, required=True)
-    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--epochs', type=int, default=50)
-    parser.add_argument('--lr', type=float, default=1e-4)
+    parser.add_argument('--lr', type=float, default=1.5e-4)
+    parser.add_argument('--warmup_epochs', type=int, default=5)
     parser.add_argument('--weight_decay', type=float, default=1e-4)
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--num_classes', type=int, default=8)
@@ -99,8 +112,14 @@ def main():
         output_dir=args.output_dir,
         class_names=EMOTION_CLASSES[args.dataset]
     )
-    train_aggregator = BatchMetricsAggregator(args.num_classes)
-    val_aggregator = BatchMetricsAggregator(args.num_classes)
+    train_aggregator = BatchMetricsAggregator(
+        args.num_classes,
+        class_names=EMOTION_CLASSES[args.dataset]
+    )
+    val_aggregator = BatchMetricsAggregator(
+        args.num_classes,
+        class_names=EMOTION_CLASSES[args.dataset]
+    )
     
     # Create datasets and dataloaders
     train_dataset = get_dataset(args.dataset, args.data_dir, 'train')
@@ -125,12 +144,23 @@ def main():
     
     # Create criterion, optimizer and scheduler
     criterion = GReFELPlusPlusLoss(
+        num_classes=args.num_classes,
         alpha=0.4,
         beta=0.2,
         gamma=2.0
     ).to(device)
+    
+    # Use AdamW with weight decay
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
+    
+    # Warmup + cosine scheduler
+    steps_per_epoch = len(train_loader)
+    scheduler = get_warmup_cosine_scheduler(
+        optimizer, 
+        args.warmup_epochs,
+        args.epochs,
+        steps_per_epoch
+    )
     
     # Training loop
     best_val_acc = 0.0
@@ -166,7 +196,7 @@ def main():
                 'scheduler_state_dict': scheduler.state_dict(),
                 'metrics': metrics_tracker.history,
             }, os.path.join(args.output_dir, 'best_model.pth'))
-            print(f'Saved new best model with validation accuracy: {best_val_acc:.2%}')
+            print(f'Saved new best model with validation accuracy: {best_val_acc:.2f}%')
 
 if __name__ == '__main__':
     main() 
