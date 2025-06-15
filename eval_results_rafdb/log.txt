@@ -1,0 +1,1359 @@
+
+Dataset statistics:
+Training samples: 11044
+Validation samples: 1227
+
+Class distribution in training set:
+Surprise: 1171 samples (10.6%)
+Fear: 252 samples (2.3%)
+Disgust: 639 samples (5.8%)
+Happiness: 4295 samples (38.9%)
+Sadness: 1781 samples (16.1%)
+Anger: 624 samples (5.7%)
+Neutral: 2282 samples (20.7%)
+Training on RAF-DB with configuration:
+  - Batch size: 32
+  - Learning rate: 0.0001
+  - Weight decay: 0.01
+  - Label smoothing: 0.1
+  - Mixup alpha: 0.4
+  - Feature dim: 768
+  - Warmup epochs: 5
+
+Epoch 1/80
+Training:   0%|                                                                                 | 0/345 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "/root/emo/grefel/train_rafdb.py", line 357, in <module>
+    main()
+  File "/root/emo/grefel/train_rafdb.py", line 291, in main
+    train_loss, train_acc = train_epoch(
+  File "/root/emo/grefel/train_rafdb.py", line 107, in train_epoch
+    for batch_idx, (images, targets) in enumerate(pbar):
+  File "/usr/local/lib/python3.10/dist-packages/tqdm/std.py", line 1181, in __iter__
+    for obj in iterable:
+  File "/usr/local/lib/python3.10/dist-packages/torch/utils/data/dataloader.py", line 733, in __next__
+    data = self._next_data()
+  File "/usr/local/lib/python3.10/dist-packages/torch/utils/data/dataloader.py", line 1515, in _next_data
+    return self._process_data(data, worker_id)
+  File "/usr/local/lib/python3.10/dist-packages/torch/utils/data/dataloader.py", line 1550, in _process_data
+    data.reraise()
+  File "/usr/local/lib/python3.10/dist-packages/torch/_utils.py", line 750, in reraise
+    raise exception
+FileNotFoundError: Caught FileNotFoundError in DataLoader worker process 0.
+Original Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/dist-packages/torch/utils/data/_utils/worker.py", line 349, in _worker_loop
+    data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+  File "/usr/local/lib/python3.10/dist-packages/torch/utils/data/_utils/fetch.py", line 52, in fetch
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/usr/local/lib/python3.10/dist-packages/torch/utils/data/_utils/fetch.py", line 52, in <listcomp>
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/root/emo/grefel/datasets/fer_datasets.py", line 263, in __getitem__
+    image = Image.open(img_path).convert('RGB')
+  File "/usr/local/lib/python3.10/dist-packages/PIL/Image.py", line 3469, in open
+    fp = builtins.open(filename, "rb")
+FileNotFoundError: [Errno 2] No such file or directory: '/root/emo/grefel/rafdb/DATASET/train/train_07783_aligned.jpg'
+
+root@emo3:~/emo/grefel# python3 train_rafdb.py --data_dir rafdb
+/usr/lib/python3/dist-packages/requests/__init__.py:87: RequestsDependencyWarning: urllib3 (2.4.0) or chardet (4.0.0) doesn't match a supported version!
+  warnings.warn("urllib3 ({}) or chardet ({}) doesn't match a supported "
+
+Dataset statistics:
+Training samples: 11044
+Validation samples: 1227
+
+Class distribution in training set:
+Surprise: 1171 samples (10.6%)
+Fear: 252 samples (2.3%)
+Disgust: 639 samples (5.8%)
+Happiness: 4295 samples (38.9%)
+Sadness: 1781 samples (16.1%)
+Anger: 624 samples (5.7%)
+Neutral: 2282 samples (20.7%)
+Training on RAF-DB with configuration:
+  - Batch size: 32
+  - Learning rate: 0.0001
+  - Weight decay: 0.01
+  - Label smoothing: 0.1
+  - Mixup alpha: 0.4
+  - Feature dim: 768
+  - Warmup epochs: 5
+
+Epoch 1/80
+Training: 100%|████████████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=1.2, acc=0.146, lr=0]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.03it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.13it/s]
+Train Loss: 1.1984 Train Acc: 0.1456
+Val Loss: 1.1978 Val Acc: 0.1654 (Best: 0.1654)
+EMA Val Acc: 0.1654 (Best: 0.1654)
+Class Accuracies:
+Surprise: 0.0252
+Fear: 0.0000
+Disgust: 0.0385
+Happiness: 0.0860
+Sadness: 0.7164
+Anger: 0.1235
+Neutral: 0.0083
+
+Epoch 2/80
+Training: 100%|███████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.918, acc=0.449, lr=2e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.96it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.07it/s]
+Train Loss: 0.9178 Train Acc: 0.4490
+Val Loss: 0.7330 Val Acc: 0.6381 (Best: 0.6381)
+EMA Val Acc: 0.4254 (Best: 0.4254)
+Class Accuracies:
+Surprise: 0.2017
+Fear: 0.0000
+Disgust: 0.0000
+Happiness: 0.9140
+Sadness: 0.4826
+Anger: 0.2222
+Neutral: 0.8595
+
+Epoch 3/80
+Training: 100%|███████████████████████████████████████| 345/345 [02:13<00:00,  2.59it/s, loss=0.756, acc=0.544, lr=4e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.94it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.10it/s]
+Train Loss: 0.7558 Train Acc: 0.5437
+Val Loss: 0.6072 Val Acc: 0.7262 (Best: 0.7262)
+EMA Val Acc: 0.4914 (Best: 0.4914)
+Class Accuracies:
+Surprise: 0.7479
+Fear: 0.0000
+Disgust: 0.0000
+Happiness: 0.9371
+Sadness: 0.6368
+Anger: 0.5679
+Neutral: 0.7479
+
+Epoch 4/80
+Training: 100%|███████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.718, acc=0.552, lr=6e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.91it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.99it/s]
+Train Loss: 0.7184 Train Acc: 0.5517
+Val Loss: 0.5836 Val Acc: 0.7343 (Best: 0.7343)
+EMA Val Acc: 0.5346 (Best: 0.5346)
+Class Accuracies:
+Surprise: 0.7143
+Fear: 0.0000
+Disgust: 0.0000
+Happiness: 0.8470
+Sadness: 0.7164
+Anger: 0.7654
+Neutral: 0.8512
+
+Epoch 5/80
+Training: 100%|███████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.717, acc=0.557, lr=8e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.99it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.00it/s]
+Train Loss: 0.7165 Train Acc: 0.5568
+Val Loss: 0.6034 Val Acc: 0.7172 (Best: 0.7343)
+EMA Val Acc: 0.5591 (Best: 0.5591)
+Class Accuracies:
+Surprise: 0.6471
+Fear: 0.0000
+Disgust: 0.0128
+Happiness: 0.8805
+Sadness: 0.6816
+Anger: 0.7407
+Neutral: 0.7645
+
+Epoch 6/80
+Training: 100%|█████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.721, acc=0.557, lr=0.0001]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.93it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.01it/s]
+Train Loss: 0.7213 Train Acc: 0.5567
+Val Loss: 0.6251 Val Acc: 0.6830 (Best: 0.7343)
+EMA Val Acc: 0.5672 (Best: 0.5672)
+Class Accuracies:
+Surprise: 0.9076
+Fear: 0.0000
+Disgust: 0.0385
+Happiness: 0.8784
+Sadness: 0.4378
+Anger: 0.7160
+Neutral: 0.6694
+
+Epoch 7/80
+Training: 100%|█████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.705, acc=0.544, lr=0.0001]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.04it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.94it/s]
+Train Loss: 0.7046 Train Acc: 0.5445
+Val Loss: 0.6379 Val Acc: 0.6960 (Best: 0.7343)
+EMA Val Acc: 0.5770 (Best: 0.5770)
+Class Accuracies:
+Surprise: 0.3445
+Fear: 0.0000
+Disgust: 0.0513
+Happiness: 0.8512
+Sadness: 0.8159
+Anger: 0.4568
+Neutral: 0.8347
+
+Epoch 8/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.701, acc=0.556, lr=9.98e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.97it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.90it/s]
+Train Loss: 0.7006 Train Acc: 0.5561
+Val Loss: 0.5524 Val Acc: 0.7571 (Best: 0.7571)
+EMA Val Acc: 0.5835 (Best: 0.5835)
+Class Accuracies:
+Surprise: 0.8571
+Fear: 0.2069
+Disgust: 0.2051
+Happiness: 0.8973
+Sadness: 0.5025
+Anger: 0.8025
+Neutral: 0.8719
+
+Epoch 9/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.689, acc=0.575, lr=9.96e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.94it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.08it/s]
+Train Loss: 0.6889 Train Acc: 0.5752
+Val Loss: 0.5894 Val Acc: 0.7294 (Best: 0.7571)
+EMA Val Acc: 0.5933 (Best: 0.5933)
+Class Accuracies:
+Surprise: 0.8739
+Fear: 0.0000
+Disgust: 0.1154
+Happiness: 0.8428
+Sadness: 0.5672
+Anger: 0.7778
+Neutral: 0.8388
+
+Epoch 10/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.59it/s, loss=0.673, acc=0.573, lr=9.93e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.13it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.97it/s]
+Train Loss: 0.6725 Train Acc: 0.5735
+Val Loss: 0.5642 Val Acc: 0.7408 (Best: 0.7571)
+EMA Val Acc: 0.6112 (Best: 0.6112)
+Class Accuracies:
+Surprise: 0.5546
+Fear: 0.1034
+Disgust: 0.3333
+Happiness: 0.9727
+Sadness: 0.5871
+Anger: 0.5556
+Neutral: 0.7727
+
+Epoch 11/80
+Training: 100%|█████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.662, acc=0.59, lr=9.89e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.83it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.93it/s]
+Train Loss: 0.6622 Train Acc: 0.5901
+Val Loss: 0.5676 Val Acc: 0.7474 (Best: 0.7571)
+EMA Val Acc: 0.6341 (Best: 0.6341)
+Class Accuracies:
+Surprise: 0.6807
+Fear: 0.1034
+Disgust: 0.1667
+Happiness: 0.9099
+Sadness: 0.5721
+Anger: 0.8025
+Neutral: 0.8512
+
+Epoch 12/80
+Training: 100%|██████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.653, acc=0.6, lr=9.84e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.95it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.12it/s]
+Train Loss: 0.6530 Train Acc: 0.5999
+Val Loss: 0.5417 Val Acc: 0.7645 (Best: 0.7645)
+EMA Val Acc: 0.6650 (Best: 0.6650)
+Class Accuracies:
+Surprise: 0.7059
+Fear: 0.4138
+Disgust: 0.2179
+Happiness: 0.8994
+Sadness: 0.9154
+Anger: 0.5926
+Neutral: 0.6777
+
+Epoch 13/80
+Training: 100%|██████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.639, acc=0.6, lr=9.79e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.07it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.83it/s]
+Train Loss: 0.6390 Train Acc: 0.6002
+Val Loss: 0.5385 Val Acc: 0.7694 (Best: 0.7694)
+EMA Val Acc: 0.6911 (Best: 0.6911)
+Class Accuracies:
+Surprise: 0.6555
+Fear: 0.1724
+Disgust: 0.2436
+Happiness: 0.9182
+Sadness: 0.5871
+Anger: 0.7037
+Neutral: 0.9463
+
+Epoch 14/80
+Training: 100%|█████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.64, acc=0.613, lr=9.72e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.90it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.99it/s]
+Train Loss: 0.6396 Train Acc: 0.6129
+Val Loss: 0.5286 Val Acc: 0.7718 (Best: 0.7718)
+EMA Val Acc: 0.7025 (Best: 0.7025)
+Class Accuracies:
+Surprise: 0.6639
+Fear: 0.3103
+Disgust: 0.4103
+Happiness: 0.8658
+Sadness: 0.7811
+Anger: 0.7654
+Neutral: 0.8058
+
+Epoch 15/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.629, acc=0.609, lr=9.65e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.07it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.96it/s]
+Train Loss: 0.6287 Train Acc: 0.6091
+Val Loss: 0.5070 Val Acc: 0.7938 (Best: 0.7938)
+EMA Val Acc: 0.7213 (Best: 0.7213)
+Class Accuracies:
+Surprise: 0.7731
+Fear: 0.3103
+Disgust: 0.2436
+Happiness: 0.9497
+Sadness: 0.7015
+Anger: 0.7037
+Neutral: 0.8388
+
+Epoch 16/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.633, acc=0.614, lr=9.57e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.09it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.90it/s]
+Train Loss: 0.6327 Train Acc: 0.6142
+Val Loss: 0.5183 Val Acc: 0.7816 (Best: 0.7938)
+EMA Val Acc: 0.7319 (Best: 0.7319)
+Class Accuracies:
+Surprise: 0.7983
+Fear: 0.3448
+Disgust: 0.2564
+Happiness: 0.9539
+Sadness: 0.6965
+Anger: 0.5802
+Neutral: 0.7934
+
+Epoch 17/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.619, acc=0.618, lr=9.48e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.95it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.93it/s]
+Train Loss: 0.6192 Train Acc: 0.6182
+Val Loss: 0.5234 Val Acc: 0.7824 (Best: 0.7938)
+EMA Val Acc: 0.7425 (Best: 0.7425)
+Class Accuracies:
+Surprise: 0.7563
+Fear: 0.1034
+Disgust: 0.2949
+Happiness: 0.8952
+Sadness: 0.6368
+Anger: 0.7037
+Neutral: 0.9587
+
+Epoch 18/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.624, acc=0.617, lr=9.39e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.98it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.98it/s]
+Train Loss: 0.6238 Train Acc: 0.6171
+Val Loss: 0.5136 Val Acc: 0.7946 (Best: 0.7946)
+EMA Val Acc: 0.7555 (Best: 0.7555)
+Class Accuracies:
+Surprise: 0.7731
+Fear: 0.3448
+Disgust: 0.4615
+Happiness: 0.9099
+Sadness: 0.6866
+Anger: 0.8025
+Neutral: 0.8264
+
+Epoch 19/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.613, acc=0.621, lr=9.28e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.97it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.03it/s]
+Train Loss: 0.6131 Train Acc: 0.6210
+Val Loss: 0.5423 Val Acc: 0.7563 (Best: 0.7946)
+EMA Val Acc: 0.7612 (Best: 0.7612)
+Class Accuracies:
+Surprise: 0.9160
+Fear: 0.3103
+Disgust: 0.7051
+Happiness: 0.8050
+Sadness: 0.6716
+Anger: 0.7531
+Neutral: 0.7231
+
+Epoch 20/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.606, acc=0.626, lr=9.17e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.90it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.01it/s]
+Train Loss: 0.6056 Train Acc: 0.6262
+Val Loss: 0.5095 Val Acc: 0.7930 (Best: 0.7946)
+EMA Val Acc: 0.7702 (Best: 0.7702)
+Class Accuracies:
+Surprise: 0.8655
+Fear: 0.3448
+Disgust: 0.4359
+Happiness: 0.8826
+Sadness: 0.6119
+Anger: 0.7531
+Neutral: 0.9132
+
+Epoch 21/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.592, acc=0.656, lr=9.05e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.03it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.89it/s]
+Train Loss: 0.5922 Train Acc: 0.6557
+Val Loss: 0.4999 Val Acc: 0.7946 (Best: 0.7946)
+EMA Val Acc: 0.7734 (Best: 0.7734)
+Class Accuracies:
+Surprise: 0.7899
+Fear: 0.2759
+Disgust: 0.4231
+Happiness: 0.8826
+Sadness: 0.8507
+Anger: 0.6790
+Neutral: 0.7975
+
+Epoch 22/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.588, acc=0.631, lr=8.93e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.93it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.95it/s]
+Train Loss: 0.5881 Train Acc: 0.6307
+Val Loss: 0.5181 Val Acc: 0.7914 (Best: 0.7946)
+EMA Val Acc: 0.7840 (Best: 0.7840)
+Class Accuracies:
+Surprise: 0.8739
+Fear: 0.3448
+Disgust: 0.6410
+Happiness: 0.8512
+Sadness: 0.7910
+Anger: 0.6420
+Neutral: 0.7851
+
+Epoch 23/80
+Training: 100%|█████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.588, acc=0.641, lr=8.8e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.93it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.98it/s]
+Train Loss: 0.5879 Train Acc: 0.6408
+Val Loss: 0.5316 Val Acc: 0.7718 (Best: 0.7946)
+EMA Val Acc: 0.7889 (Best: 0.7889)
+Class Accuracies:
+Surprise: 0.7899
+Fear: 0.4138
+Disgust: 0.5897
+Happiness: 0.8029
+Sadness: 0.8159
+Anger: 0.8272
+Neutral: 0.7479
+
+Epoch 24/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.581, acc=0.664, lr=8.66e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.89it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.89it/s]
+Train Loss: 0.5808 Train Acc: 0.6644
+Val Loss: 0.4823 Val Acc: 0.8215 (Best: 0.8215)
+EMA Val Acc: 0.7954 (Best: 0.7954)
+Class Accuracies:
+Surprise: 0.8739
+Fear: 0.4483
+Disgust: 0.5256
+Happiness: 0.9078
+Sadness: 0.7463
+Anger: 0.7160
+Neutral: 0.8636
+
+Epoch 25/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.574, acc=0.652, lr=8.51e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.98it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.89it/s]
+Train Loss: 0.5743 Train Acc: 0.6522
+Val Loss: 0.4781 Val Acc: 0.8223 (Best: 0.8223)
+EMA Val Acc: 0.8028 (Best: 0.8028)
+Class Accuracies:
+Surprise: 0.8235
+Fear: 0.4828
+Disgust: 0.6410
+Happiness: 0.9078
+Sadness: 0.8109
+Anger: 0.6049
+Neutral: 0.8347
+
+Epoch 26/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.563, acc=0.654, lr=8.36e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.92it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.99it/s]
+Train Loss: 0.5632 Train Acc: 0.6537
+Val Loss: 0.4856 Val Acc: 0.8240 (Best: 0.8240)
+EMA Val Acc: 0.8085 (Best: 0.8085)
+Class Accuracies:
+Surprise: 0.7899
+Fear: 0.3103
+Disgust: 0.4744
+Happiness: 0.9161
+Sadness: 0.7612
+Anger: 0.7901
+Neutral: 0.8967
+
+Epoch 27/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.571, acc=0.657, lr=8.21e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.99it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.98it/s]
+Train Loss: 0.5707 Train Acc: 0.6565
+Val Loss: 0.5265 Val Acc: 0.7759 (Best: 0.8240)
+EMA Val Acc: 0.8109 (Best: 0.8109)
+Class Accuracies:
+Surprise: 0.8739
+Fear: 0.3793
+Disgust: 0.6410
+Happiness: 0.8574
+Sadness: 0.6368
+Anger: 0.5926
+Neutral: 0.8347
+
+Epoch 28/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.556, acc=0.663, lr=8.04e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.06it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.06it/s]
+Train Loss: 0.5563 Train Acc: 0.6631
+Val Loss: 0.5085 Val Acc: 0.7971 (Best: 0.8240)
+EMA Val Acc: 0.8166 (Best: 0.8166)
+Class Accuracies:
+Surprise: 0.8739
+Fear: 0.3793
+Disgust: 0.5641
+Happiness: 0.8973
+Sadness: 0.8259
+Anger: 0.8148
+Neutral: 0.6570
+
+Epoch 29/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.548, acc=0.686, lr=7.88e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.96it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.14it/s]
+Train Loss: 0.5480 Train Acc: 0.6860
+Val Loss: 0.4789 Val Acc: 0.8297 (Best: 0.8297)
+EMA Val Acc: 0.8207 (Best: 0.8207)
+Class Accuracies:
+Surprise: 0.7311
+Fear: 0.4138
+Disgust: 0.6282
+Happiness: 0.9078
+Sadness: 0.8607
+Anger: 0.8025
+Neutral: 0.8223
+
+Epoch 30/80
+Training: 100%|█████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.554, acc=0.649, lr=7.7e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.05it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.01it/s]
+Train Loss: 0.5544 Train Acc: 0.6493
+Val Loss: 0.4718 Val Acc: 0.8337 (Best: 0.8337)
+EMA Val Acc: 0.8264 (Best: 0.8264)
+Class Accuracies:
+Surprise: 0.8235
+Fear: 0.4483
+Disgust: 0.6667
+Happiness: 0.9057
+Sadness: 0.7313
+Anger: 0.8148
+Neutral: 0.8884
+
+Epoch 31/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.556, acc=0.652, lr=7.52e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.07it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.11it/s]
+Train Loss: 0.5557 Train Acc: 0.6524
+Val Loss: 0.4853 Val Acc: 0.8036 (Best: 0.8337)
+EMA Val Acc: 0.8256 (Best: 0.8264)
+Class Accuracies:
+Surprise: 0.7395
+Fear: 0.5517
+Disgust: 0.8077
+Happiness: 0.8344
+Sadness: 0.7662
+Anger: 0.7654
+Neutral: 0.8471
+
+Epoch 32/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.547, acc=0.657, lr=7.34e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.14it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.16it/s]
+Train Loss: 0.5465 Train Acc: 0.6567
+Val Loss: 0.4768 Val Acc: 0.8248 (Best: 0.8337)
+EMA Val Acc: 0.8289 (Best: 0.8289)
+Class Accuracies:
+Surprise: 0.8824
+Fear: 0.4138
+Disgust: 0.5769
+Happiness: 0.9245
+Sadness: 0.7562
+Anger: 0.7407
+Neutral: 0.8140
+
+Epoch 33/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.528, acc=0.696, lr=7.16e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.94it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.08it/s]
+Train Loss: 0.5285 Train Acc: 0.6957
+Val Loss: 0.4786 Val Acc: 0.8207 (Best: 0.8337)
+EMA Val Acc: 0.8305 (Best: 0.8305)
+Class Accuracies:
+Surprise: 0.8235
+Fear: 0.3793
+Disgust: 0.5897
+Happiness: 0.9182
+Sadness: 0.6219
+Anger: 0.7901
+Neutral: 0.9298
+
+Epoch 34/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.529, acc=0.667, lr=6.97e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.89it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.94it/s]
+Train Loss: 0.5292 Train Acc: 0.6675
+Val Loss: 0.4886 Val Acc: 0.8289 (Best: 0.8337)
+EMA Val Acc: 0.8329 (Best: 0.8329)
+Class Accuracies:
+Surprise: 0.7815
+Fear: 0.3448
+Disgust: 0.6538
+Happiness: 0.8847
+Sadness: 0.7861
+Anger: 0.7160
+Neutral: 0.9298
+
+Epoch 35/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.538, acc=0.688, lr=6.78e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.99it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.10it/s]
+Train Loss: 0.5377 Train Acc: 0.6884
+Val Loss: 0.4694 Val Acc: 0.8297 (Best: 0.8337)
+EMA Val Acc: 0.8337 (Best: 0.8337)
+Class Accuracies:
+Surprise: 0.7815
+Fear: 0.4828
+Disgust: 0.6282
+Happiness: 0.8994
+Sadness: 0.8458
+Anger: 0.7160
+Neutral: 0.8471
+
+Epoch 36/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.519, acc=0.702, lr=6.58e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.96it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.95it/s]
+Train Loss: 0.5191 Train Acc: 0.7024
+Val Loss: 0.4844 Val Acc: 0.8321 (Best: 0.8337)
+EMA Val Acc: 0.8362 (Best: 0.8362)
+Class Accuracies:
+Surprise: 0.8235
+Fear: 0.4483
+Disgust: 0.7692
+Happiness: 0.8847
+Sadness: 0.8408
+Anger: 0.7160
+Neutral: 0.8306
+
+Epoch 37/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.502, acc=0.686, lr=6.38e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.06it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.04it/s]
+Train Loss: 0.5023 Train Acc: 0.6856
+Val Loss: 0.4813 Val Acc: 0.8297 (Best: 0.8337)
+EMA Val Acc: 0.8370 (Best: 0.8370)
+Class Accuracies:
+Surprise: 0.7143
+Fear: 0.5862
+Disgust: 0.6410
+Happiness: 0.9182
+Sadness: 0.8408
+Anger: 0.7901
+Neutral: 0.8058
+
+Epoch 38/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.519, acc=0.698, lr=6.18e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.07it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.09it/s]
+Train Loss: 0.5189 Train Acc: 0.6976
+Val Loss: 0.4575 Val Acc: 0.8468 (Best: 0.8468)
+EMA Val Acc: 0.8394 (Best: 0.8394)
+Class Accuracies:
+Surprise: 0.8824
+Fear: 0.4828
+Disgust: 0.6795
+Happiness: 0.9057
+Sadness: 0.7861
+Anger: 0.7654
+Neutral: 0.8884
+
+Epoch 39/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.505, acc=0.699, lr=5.98e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.00it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.12it/s]
+Train Loss: 0.5045 Train Acc: 0.6988
+Val Loss: 0.4739 Val Acc: 0.8346 (Best: 0.8468)
+EMA Val Acc: 0.8435 (Best: 0.8435)
+Class Accuracies:
+Surprise: 0.8235
+Fear: 0.5517
+Disgust: 0.7564
+Happiness: 0.9266
+Sadness: 0.7164
+Anger: 0.8272
+Neutral: 0.8182
+
+Epoch 40/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.505, acc=0.691, lr=5.77e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.08it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.12it/s]
+Train Loss: 0.5053 Train Acc: 0.6911
+Val Loss: 0.4698 Val Acc: 0.8460 (Best: 0.8468)
+EMA Val Acc: 0.8476 (Best: 0.8476)
+Class Accuracies:
+Surprise: 0.8151
+Fear: 0.6552
+Disgust: 0.4615
+Happiness: 0.9392
+Sadness: 0.7761
+Anger: 0.8272
+Neutral: 0.8884
+
+Epoch 41/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.492, acc=0.717, lr=5.57e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.95it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.89it/s]
+Train Loss: 0.4923 Train Acc: 0.7170
+Val Loss: 0.4742 Val Acc: 0.8509 (Best: 0.8509)
+EMA Val Acc: 0.8509 (Best: 0.8509)
+Class Accuracies:
+Surprise: 0.8319
+Fear: 0.5862
+Disgust: 0.6538
+Happiness: 0.9434
+Sadness: 0.7562
+Anger: 0.7407
+Neutral: 0.8884
+
+Epoch 42/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.477, acc=0.706, lr=5.36e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.04it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.10it/s]
+Train Loss: 0.4771 Train Acc: 0.7059
+Val Loss: 0.4785 Val Acc: 0.8329 (Best: 0.8509)
+EMA Val Acc: 0.8500 (Best: 0.8509)
+Class Accuracies:
+Surprise: 0.7899
+Fear: 0.5172
+Disgust: 0.5641
+Happiness: 0.8721
+Sadness: 0.8607
+Anger: 0.8519
+Neutral: 0.8719
+
+Epoch 43/80
+Training: 100%|█████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.47, acc=0.723, lr=5.15e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.01it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.10it/s]
+Train Loss: 0.4698 Train Acc: 0.7226
+Val Loss: 0.4942 Val Acc: 0.8321 (Best: 0.8509)
+EMA Val Acc: 0.8549 (Best: 0.8549)
+Class Accuracies:
+Surprise: 0.7899
+Fear: 0.4828
+Disgust: 0.6282
+Happiness: 0.8847
+Sadness: 0.8209
+Anger: 0.7531
+Neutral: 0.8926
+
+Epoch 44/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.473, acc=0.721, lr=4.95e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.96it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.99it/s]
+Train Loss: 0.4726 Train Acc: 0.7212
+Val Loss: 0.4586 Val Acc: 0.8509 (Best: 0.8509)
+EMA Val Acc: 0.8541 (Best: 0.8549)
+Class Accuracies:
+Surprise: 0.8067
+Fear: 0.4828
+Disgust: 0.5513
+Happiness: 0.9455
+Sadness: 0.8806
+Anger: 0.7160
+Neutral: 0.8471
+
+Epoch 45/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.466, acc=0.739, lr=4.74e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.98it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.05it/s]
+Train Loss: 0.4657 Train Acc: 0.7394
+Val Loss: 0.5047 Val Acc: 0.8337 (Best: 0.8509)
+EMA Val Acc: 0.8533 (Best: 0.8549)
+Class Accuracies:
+Surprise: 0.8151
+Fear: 0.5517
+Disgust: 0.5769
+Happiness: 0.9329
+Sadness: 0.7114
+Anger: 0.7901
+Neutral: 0.8802
+
+Epoch 46/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.474, acc=0.714, lr=4.53e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.03it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.97it/s]
+Train Loss: 0.4738 Train Acc: 0.7138
+Val Loss: 0.4911 Val Acc: 0.8297 (Best: 0.8509)
+EMA Val Acc: 0.8533 (Best: 0.8549)
+Class Accuracies:
+Surprise: 0.8571
+Fear: 0.5862
+Disgust: 0.6667
+Happiness: 0.9287
+Sadness: 0.6617
+Anger: 0.8519
+Neutral: 0.8347
+
+Epoch 47/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.458, acc=0.745, lr=4.33e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.11it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.10it/s]
+Train Loss: 0.4578 Train Acc: 0.7448
+Val Loss: 0.4922 Val Acc: 0.8362 (Best: 0.8509)
+EMA Val Acc: 0.8557 (Best: 0.8557)
+Class Accuracies:
+Surprise: 0.8655
+Fear: 0.5862
+Disgust: 0.6923
+Happiness: 0.9266
+Sadness: 0.7463
+Anger: 0.7407
+Neutral: 0.8264
+
+Epoch 48/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.453, acc=0.773, lr=4.12e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.96it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.02it/s]
+Train Loss: 0.4529 Train Acc: 0.7727
+Val Loss: 0.5051 Val Acc: 0.8411 (Best: 0.8509)
+EMA Val Acc: 0.8557 (Best: 0.8557)
+Class Accuracies:
+Surprise: 0.8571
+Fear: 0.5517
+Disgust: 0.7179
+Happiness: 0.9161
+Sadness: 0.7313
+Anger: 0.7654
+Neutral: 0.8760
+
+Epoch 49/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.452, acc=0.723, lr=3.92e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.98it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.09it/s]
+Train Loss: 0.4523 Train Acc: 0.7226
+Val Loss: 0.4886 Val Acc: 0.8460 (Best: 0.8509)
+EMA Val Acc: 0.8566 (Best: 0.8566)
+Class Accuracies:
+Surprise: 0.8487
+Fear: 0.6207
+Disgust: 0.6538
+Happiness: 0.9161
+Sadness: 0.8507
+Anger: 0.7654
+Neutral: 0.8182
+
+Epoch 50/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.448, acc=0.725, lr=3.72e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.05it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.00it/s]
+Train Loss: 0.4480 Train Acc: 0.7251
+Val Loss: 0.4891 Val Acc: 0.8500 (Best: 0.8509)
+EMA Val Acc: 0.8598 (Best: 0.8598)
+Class Accuracies:
+Surprise: 0.8571
+Fear: 0.5172
+Disgust: 0.6667
+Happiness: 0.9224
+Sadness: 0.8060
+Anger: 0.7654
+Neutral: 0.8678
+
+Epoch 51/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.442, acc=0.765, lr=3.52e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.06it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.04it/s]
+Train Loss: 0.4424 Train Acc: 0.7654
+Val Loss: 0.4793 Val Acc: 0.8631 (Best: 0.8631)
+EMA Val Acc: 0.8647 (Best: 0.8647)
+Class Accuracies:
+Surprise: 0.8151
+Fear: 0.6207
+Disgust: 0.7564
+Happiness: 0.9560
+Sadness: 0.7861
+Anger: 0.7407
+Neutral: 0.8719
+
+Epoch 52/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.454, acc=0.736, lr=3.32e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.94it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.12it/s]
+Train Loss: 0.4537 Train Acc: 0.7364
+Val Loss: 0.4956 Val Acc: 0.8476 (Best: 0.8631)
+EMA Val Acc: 0.8663 (Best: 0.8663)
+Class Accuracies:
+Surprise: 0.8824
+Fear: 0.5862
+Disgust: 0.6795
+Happiness: 0.9623
+Sadness: 0.7711
+Anger: 0.7531
+Neutral: 0.7851
+
+Epoch 53/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.433, acc=0.739, lr=3.13e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.91it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.99it/s]
+Train Loss: 0.4326 Train Acc: 0.7394
+Val Loss: 0.4881 Val Acc: 0.8533 (Best: 0.8631)
+EMA Val Acc: 0.8655 (Best: 0.8663)
+Class Accuracies:
+Surprise: 0.8571
+Fear: 0.5517
+Disgust: 0.7051
+Happiness: 0.9099
+Sadness: 0.8358
+Anger: 0.8025
+Neutral: 0.8554
+
+Epoch 54/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.447, acc=0.754, lr=2.94e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.09it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.04it/s]
+Train Loss: 0.4467 Train Acc: 0.7535
+Val Loss: 0.4958 Val Acc: 0.8419 (Best: 0.8631)
+EMA Val Acc: 0.8631 (Best: 0.8663)
+Class Accuracies:
+Surprise: 0.8319
+Fear: 0.5172
+Disgust: 0.7308
+Happiness: 0.9182
+Sadness: 0.7662
+Anger: 0.7284
+Neutral: 0.8719
+
+Epoch 55/80
+Training:  90%|████████████████████████████████▎   | 310/345 [02:00<00:13,  2.62it/s, loss=0.446, acc=0.761, lr=2.76e-5]Training:  90%|████████████████████████████████▍   | 311/345 [02:00<00:12,  2.62it/s, loss=0.445, acc=0.759, lr=2.76e-5]Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.443, acc=0.763, lr=2.76e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.24it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.23it/s]
+Train Loss: 0.4427 Train Acc: 0.7630
+Val Loss: 0.4898 Val Acc: 0.8435 (Best: 0.8631)
+EMA Val Acc: 0.8647 (Best: 0.8663)
+Class Accuracies:
+Surprise: 0.7899
+Fear: 0.5862
+Disgust: 0.7436
+Happiness: 0.8994
+Sadness: 0.8259
+Anger: 0.7901
+Neutral: 0.8554
+
+Epoch 56/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.419, acc=0.736, lr=2.58e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.05it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.08it/s]
+Train Loss: 0.4192 Train Acc: 0.7359
+Val Loss: 0.4960 Val Acc: 0.8509 (Best: 0.8631)
+EMA Val Acc: 0.8655 (Best: 0.8663)
+Class Accuracies:
+Surprise: 0.8403
+Fear: 0.5172
+Disgust: 0.5897
+Happiness: 0.9099
+Sadness: 0.8607
+Anger: 0.8025
+Neutral: 0.8719
+
+Epoch 57/80
+Training: 100%|█████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.421, acc=0.754, lr=2.4e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.99it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.84it/s]
+Train Loss: 0.4208 Train Acc: 0.7543
+Val Loss: 0.5019 Val Acc: 0.8509 (Best: 0.8631)
+EMA Val Acc: 0.8688 (Best: 0.8688)
+Class Accuracies:
+Surprise: 0.8487
+Fear: 0.6207
+Disgust: 0.6410
+Happiness: 0.9329
+Sadness: 0.8159
+Anger: 0.7160
+Neutral: 0.8595
+
+Epoch 58/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.433, acc=0.762, lr=2.22e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.98it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.95it/s]
+Train Loss: 0.4329 Train Acc: 0.7619
+Val Loss: 0.4823 Val Acc: 0.8590 (Best: 0.8631)
+EMA Val Acc: 0.8712 (Best: 0.8712)
+Class Accuracies:
+Surprise: 0.8908
+Fear: 0.5517
+Disgust: 0.6795
+Happiness: 0.9266
+Sadness: 0.8557
+Anger: 0.7654
+Neutral: 0.8388
+
+Epoch 59/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.427, acc=0.761, lr=2.06e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.98it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.06it/s]
+Train Loss: 0.4269 Train Acc: 0.7612
+Val Loss: 0.5072 Val Acc: 0.8443 (Best: 0.8631)
+EMA Val Acc: 0.8745 (Best: 0.8745)
+Class Accuracies:
+Surprise: 0.8319
+Fear: 0.5517
+Disgust: 0.6410
+Happiness: 0.9182
+Sadness: 0.8060
+Anger: 0.8025
+Neutral: 0.8512
+
+Epoch 60/80
+Training: 100%|████████████████████████████████████| 345/345 [02:12<00:00,  2.60it/s, loss=0.423, acc=0.753, lr=1.89e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.13it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.13it/s]
+Train Loss: 0.4235 Train Acc: 0.7533
+Val Loss: 0.4915 Val Acc: 0.8549 (Best: 0.8631)
+EMA Val Acc: 0.8778 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8403
+Fear: 0.6552
+Disgust: 0.6538
+Happiness: 0.9371
+Sadness: 0.8358
+Anger: 0.8395
+Neutral: 0.8099
+
+Epoch 61/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.424, acc=0.771, lr=1.74e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.10it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.96it/s]
+Train Loss: 0.4235 Train Acc: 0.7713
+Val Loss: 0.5014 Val Acc: 0.8484 (Best: 0.8631)
+EMA Val Acc: 0.8753 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8235
+Fear: 0.5862
+Disgust: 0.6282
+Happiness: 0.9350
+Sadness: 0.7512
+Anger: 0.8148
+Neutral: 0.8843
+
+Epoch 62/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.407, acc=0.767, lr=1.59e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.94it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.96it/s]
+Train Loss: 0.4075 Train Acc: 0.7674
+Val Loss: 0.5104 Val Acc: 0.8500 (Best: 0.8631)
+EMA Val Acc: 0.8745 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8571
+Fear: 0.5517
+Disgust: 0.6282
+Happiness: 0.9266
+Sadness: 0.8010
+Anger: 0.7654
+Neutral: 0.8719
+
+Epoch 63/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.409, acc=0.756, lr=1.44e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.98it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.91it/s]
+Train Loss: 0.4091 Train Acc: 0.7559
+Val Loss: 0.5254 Val Acc: 0.8403 (Best: 0.8631)
+EMA Val Acc: 0.8745 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8235
+Fear: 0.5862
+Disgust: 0.6667
+Happiness: 0.9140
+Sadness: 0.8109
+Anger: 0.8025
+Neutral: 0.8264
+
+Epoch 64/80
+Training: 100%|██████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.404, acc=0.77, lr=1.3e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.99it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.94it/s]
+Train Loss: 0.4042 Train Acc: 0.7696
+Val Loss: 0.5122 Val Acc: 0.8500 (Best: 0.8631)
+EMA Val Acc: 0.8761 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8655
+Fear: 0.5862
+Disgust: 0.6667
+Happiness: 0.9266
+Sadness: 0.7861
+Anger: 0.8272
+Neutral: 0.8430
+
+Epoch 65/80
+Training: 100%|█████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.39, acc=0.788, lr=1.17e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.90it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.03it/s]
+Train Loss: 0.3896 Train Acc: 0.7884
+Val Loss: 0.5153 Val Acc: 0.8509 (Best: 0.8631)
+EMA Val Acc: 0.8778 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8151
+Fear: 0.6207
+Disgust: 0.6538
+Happiness: 0.9413
+Sadness: 0.8109
+Anger: 0.8025
+Neutral: 0.8306
+
+Epoch 66/80
+Training: 100%|████████████████████████████████████| 345/345 [02:12<00:00,  2.60it/s, loss=0.402, acc=0.769, lr=1.05e-5]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.17it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.25it/s]
+Train Loss: 0.4023 Train Acc: 0.7690
+Val Loss: 0.5265 Val Acc: 0.8386 (Best: 0.8631)
+EMA Val Acc: 0.8769 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8235
+Fear: 0.6207
+Disgust: 0.6026
+Happiness: 0.8994
+Sadness: 0.7662
+Anger: 0.8025
+Neutral: 0.9008
+
+Epoch 67/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.408, acc=0.792, lr=9.27e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.92it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.98it/s]
+Train Loss: 0.4078 Train Acc: 0.7925
+Val Loss: 0.5091 Val Acc: 0.8500 (Best: 0.8631)
+EMA Val Acc: 0.8769 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8235
+Fear: 0.5862
+Disgust: 0.6795
+Happiness: 0.9078
+Sadness: 0.8010
+Anger: 0.8148
+Neutral: 0.8884
+
+Epoch 68/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.411, acc=0.776, lr=8.16e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.04it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.94it/s]
+Train Loss: 0.4108 Train Acc: 0.7762
+Val Loss: 0.5204 Val Acc: 0.8427 (Best: 0.8631)
+EMA Val Acc: 0.8778 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8571
+Fear: 0.5517
+Disgust: 0.6538
+Happiness: 0.9224
+Sadness: 0.7662
+Anger: 0.8025
+Neutral: 0.8512
+
+Epoch 69/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.398, acc=0.752, lr=7.12e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.08it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.04it/s]
+Train Loss: 0.3982 Train Acc: 0.7516
+Val Loss: 0.5195 Val Acc: 0.8411 (Best: 0.8631)
+EMA Val Acc: 0.8769 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8487
+Fear: 0.5862
+Disgust: 0.6026
+Happiness: 0.9203
+Sadness: 0.7811
+Anger: 0.7778
+Neutral: 0.8595
+
+Epoch 70/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.406, acc=0.751, lr=6.16e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.97it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.00it/s]
+Train Loss: 0.4057 Train Acc: 0.7509
+Val Loss: 0.5170 Val Acc: 0.8468 (Best: 0.8631)
+EMA Val Acc: 0.8769 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8571
+Fear: 0.5517
+Disgust: 0.6282
+Happiness: 0.9182
+Sadness: 0.7761
+Anger: 0.8025
+Neutral: 0.8802
+
+Epoch 71/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.401, acc=0.774, lr=5.28e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.03it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.05it/s]
+Train Loss: 0.4012 Train Acc: 0.7742
+Val Loss: 0.5236 Val Acc: 0.8394 (Best: 0.8631)
+EMA Val Acc: 0.8778 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8824
+Fear: 0.5517
+Disgust: 0.6410
+Happiness: 0.9036
+Sadness: 0.7562
+Anger: 0.7778
+Neutral: 0.8802
+
+Epoch 72/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.398, acc=0.773, lr=4.48e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.03it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.05it/s]
+Train Loss: 0.3975 Train Acc: 0.7730
+Val Loss: 0.5243 Val Acc: 0.8435 (Best: 0.8631)
+EMA Val Acc: 0.8769 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8403
+Fear: 0.5862
+Disgust: 0.6410
+Happiness: 0.9015
+Sadness: 0.7910
+Anger: 0.8025
+Neutral: 0.8843
+
+Epoch 73/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.404, acc=0.767, lr=3.75e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.95it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.05it/s]
+Train Loss: 0.4036 Train Acc: 0.7675
+Val Loss: 0.5160 Val Acc: 0.8468 (Best: 0.8631)
+EMA Val Acc: 0.8778 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8487
+Fear: 0.5517
+Disgust: 0.6538
+Happiness: 0.9161
+Sadness: 0.8109
+Anger: 0.7654
+Neutral: 0.8636
+
+Epoch 74/80
+Training: 100%|████████████████████████████████████| 345/345 [02:14<00:00,  2.57it/s, loss=0.391, acc=0.758, lr=3.11e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.96it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.96it/s]
+Train Loss: 0.3910 Train Acc: 0.7580
+Val Loss: 0.5198 Val Acc: 0.8484 (Best: 0.8631)
+EMA Val Acc: 0.8769 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8571
+Fear: 0.5862
+Disgust: 0.6667
+Happiness: 0.9119
+Sadness: 0.8109
+Anger: 0.7654
+Neutral: 0.8678
+
+Epoch 75/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.57it/s, loss=0.398, acc=0.768, lr=2.56e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.02it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.07it/s]
+Train Loss: 0.3975 Train Acc: 0.7682
+Val Loss: 0.5198 Val Acc: 0.8492 (Best: 0.8631)
+EMA Val Acc: 0.8778 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8655
+Fear: 0.5862
+Disgust: 0.6795
+Happiness: 0.9182
+Sadness: 0.7861
+Anger: 0.7901
+Neutral: 0.8636
+
+Epoch 76/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.388, acc=0.787, lr=2.08e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.03it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.06it/s]
+Train Loss: 0.3881 Train Acc: 0.7874
+Val Loss: 0.5146 Val Acc: 0.8557 (Best: 0.8631)
+EMA Val Acc: 0.8778 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8571
+Fear: 0.5517
+Disgust: 0.6667
+Happiness: 0.9182
+Sadness: 0.8159
+Anger: 0.7901
+Neutral: 0.8843
+
+Epoch 77/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.393, acc=0.773, lr=1.69e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.97it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.00it/s]
+Train Loss: 0.3929 Train Acc: 0.7727
+Val Loss: 0.5115 Val Acc: 0.8525 (Best: 0.8631)
+EMA Val Acc: 0.8778 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8403
+Fear: 0.5862
+Disgust: 0.6667
+Happiness: 0.9224
+Sadness: 0.7861
+Anger: 0.8025
+Neutral: 0.8843
+
+Epoch 78/80
+Training: 100%|████████████████████████████████████| 345/345 [02:13<00:00,  2.57it/s, loss=0.383, acc=0.771, lr=1.39e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.97it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.04it/s]
+Train Loss: 0.3829 Train Acc: 0.7715
+Val Loss: 0.5201 Val Acc: 0.8500 (Best: 0.8631)
+EMA Val Acc: 0.8778 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8487
+Fear: 0.5862
+Disgust: 0.6667
+Happiness: 0.9161
+Sadness: 0.7960
+Anger: 0.7901
+Neutral: 0.8760
+
+Epoch 79/80
+Training: 100%|█████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.383, acc=0.78, lr=1.17e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.98it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.96it/s]
+Train Loss: 0.3829 Train Acc: 0.7801
+Val Loss: 0.5240 Val Acc: 0.8476 (Best: 0.8631)
+EMA Val Acc: 0.8778 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8571
+Fear: 0.5862
+Disgust: 0.6667
+Happiness: 0.9182
+Sadness: 0.7662
+Anger: 0.7901
+Neutral: 0.8802
+
+Epoch 80/80
+Training: 100%|██████████████████████████████████████| 345/345 [02:13<00:00,  2.58it/s, loss=0.39, acc=0.77, lr=1.04e-6]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  8.97it/s]
+Validation: 100%|███████████████████████████████████████████████████████████████████████| 39/39 [00:04<00:00,  9.04it/s]
+Train Loss: 0.3898 Train Acc: 0.7705
+Val Loss: 0.5189 Val Acc: 0.8525 (Best: 0.8631)
+EMA Val Acc: 0.8761 (Best: 0.8778)
+Class Accuracies:
+Surprise: 0.8319
+Fear: 0.5862
+Disgust: 0.6795
+Happiness: 0.9224
+Sadness: 0.7861
+Anger: 0.8025
+Neutral: 0.8843
