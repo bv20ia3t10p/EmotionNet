@@ -1,0 +1,58 @@
+Overall Accuracy: 86.88%
+
+Per-class Accuracy:
+Neutral: 89.72%
+Happiness: 95.05%
+Surprise: 89.91%
+Sadness: 75.22%
+Anger: 83.44%
+Disgust: 39.13%
+Fear: 47.87%
+Contempt: 34.48%
+
+Detailed Classification Report:
+              precision    recall  f1-score   support
+
+     Neutral     0.8677    0.8972    0.8822      1294
+   Happiness     0.9444    0.9505    0.9474       929
+    Surprise     0.8605    0.8991    0.8794       446
+     Sadness     0.7712    0.7522    0.7616       448
+       Anger     0.8395    0.8344    0.8369       326
+     Disgust     0.5625    0.3913    0.4615        23
+        Fear     0.7377    0.4787    0.5806        94
+    Contempt     0.8333    0.3448    0.4878        29
+
+    accuracy                         0.8688      3589
+   macro avg     0.8021    0.6935    0.7297      3589
+weighted avg     0.8664    0.8688    0.8658      3589
+
+Best Training Results Summary:
+
+Best Validation Accuracy: 86.74% (Epoch 30)
+Best EMA Validation Accuracy: 87.55% (Epoch 50)
+
+Final Class-wise Accuracies (at best epoch):
+- Neutral:   88.58%
+- Happiness: 93.55%
+- Surprise:  92.37%
+- Sadness:   75.84%
+- Anger:     80.00%
+- Disgust:   47.22%
+- Fear:      65.33%
+- Contempt:  28.00%
+
+Training Hyperparameters:
+- Batch size: 64
+- Learning rate: 5e-5
+- Weight decay: 0.005
+- Label smoothing: 0.11
+- Mixup alpha: 0.2
+- Feature dim: 768
+- No warmup epochs
+
+Key Observations:
+1. Strong performance on majority classes (Happiness, Surprise, Neutral)
+2. Moderate performance on Sadness and Anger
+3. Lower accuracy on minority classes (Disgust, Fear, Contempt)
+4. EMA model shows better stability and final performance
+5. Peak performance achieved around epoch 30-50

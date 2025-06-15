@@ -18,28 +18,28 @@ def parse_finetune_args():
     # Base training args (inherited from successful run)
     parser.add_argument('--dataset', type=str, default='ferplus', choices=['ferplus', 'rafdb', 'fer2013'], help='Dataset to use')
     parser.add_argument('--data_dir', type=str, default='./FERPlus', help='Path to dataset directory')
-    parser.add_argument('--batch_size', type=int, default=64, help='Batch size (optimized for GReFEL)')
+    parser.add_argument('--batch_size', type=int, default=32, help='Batch size (reduced for better generalization)')
     parser.add_argument('--num_workers', type=int, default=8, help='Number of data loading workers')
-    parser.add_argument('--use_soft_labels', action='store_true', default=True, help='Use probability distribution from FERPlus votes (default)')
+    parser.add_argument('--use_soft_labels', action='store_true', default=False, help='Use probability distribution from FERPlus votes (default)')
     parser.add_argument('--use_hard_labels', dest='use_soft_labels', action='store_false', help='Use majority vote from FERPlus')
     
     # Fine-tuning specific parameters (optimized based on successful training)
     parser.add_argument('--checkpoint_path', type=str, required=True, help='Path to checkpoint to fine-tune from')
     parser.add_argument('--finetune_name', type=str, default='finetuned', help='Name suffix for fine-tuned model')
-    parser.add_argument('--epochs', type=int, default=50, help='Fine-tuning epochs')
+    parser.add_argument('--epochs', type=int, default=35, help='Fine-tuning epochs (reduced based on convergence)')
     
-    # Fine-tuning hyperparameters - based on successful original training but slightly adjusted
-    parser.add_argument('--lr', type=float, default=2e-5, help='Fine-tuning learning rate (lower than original 5e-5)')
-    parser.add_argument('--weight_decay', type=float, default=0.007, help='Weight decay (slightly higher for fine-tuning)')
-    parser.add_argument('--warmup_epochs', type=int, default=5, help='Warmup epochs (shorter for fine-tuning)')
+    # Fine-tuning hyperparameters - optimized based on training logs
+    parser.add_argument('--lr', type=float, default=4.5e-5, help='Initial learning rate')
+    parser.add_argument('--weight_decay', type=float, default=0.003, help='Weight decay (reduced for stability)')
+    parser.add_argument('--warmup_epochs', type=int, default=3, help='Warmup epochs (shorter for fine-tuning)')
     
-    # Regularization (stronger for fine-tuning to prevent overfitting)
-    parser.add_argument('--drop_rate', type=float, default=0.18, help='Dropout rate (slightly higher)')
-    parser.add_argument('--label_smoothing', type=float, default=0.13, help='Label smoothing (slightly higher)')
-    parser.add_argument('--mixup_alpha', type=float, default=0.25, help='Mixup alpha (slightly higher)')
+    # Regularization (optimized based on class performance)
+    parser.add_argument('--drop_rate', type=float, default=0.15, help='Dropout rate')
+    parser.add_argument('--label_smoothing', type=float, default=0.1, help='Label smoothing')
+    parser.add_argument('--mixup_alpha', type=float, default=0.3, help='Mixup alpha')
     
     # EMA and other settings
-    parser.add_argument('--ema_decay', type=float, default=0.9998, help='EMA decay (slightly faster updates)')
+    parser.add_argument('--ema_decay', type=float, default=0.9995, help='EMA decay')
     parser.add_argument('--grad_clip', type=float, default=1.0, help='Gradient clipping')
     parser.add_argument('--save_freq', type=int, default=5, help='Save frequency')
     
@@ -100,11 +100,11 @@ def main():
     # Learning rate scheduler with warmup then cosine decay
     def lr_lambda(epoch):
         if epoch < args.warmup_epochs:
-            # Linear warmup from 20% to 100% of base lr
-            return 0.2 + 0.8 * (epoch / args.warmup_epochs)
-        # Cosine decay from 100% to 20% of base lr
+            # Linear warmup from 50% to 100% of base lr
+            return 0.5 + 0.5 * (epoch / args.warmup_epochs)
+        # Cosine decay from 100% to 10% of base lr
         progress = (epoch - args.warmup_epochs) / (args.epochs - args.warmup_epochs)
-        return 0.2 + 0.8 * 0.5 * (1 + np.cos(np.pi * progress))
+        return 0.1 + 0.9 * 0.5 * (1 + np.cos(np.pi * progress))
     
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     

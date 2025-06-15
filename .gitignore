@@ -34,6 +34,8 @@ temp_*.txt
 temp_*.json
 *.tmp
 
+rafdb/
+
 # Training outputs and logs
 runs/
 logs/
@@ -45,10 +47,6 @@ comparison_results/
 training_plots/
 
 # Generated visualizations and outputs
-*.png
-*.jpg
-*.jpeg
-*.gif
 !README*.png
 !README*.jpg
 !*.jpg  # Allow specific landmark visualization images that are part of documentation

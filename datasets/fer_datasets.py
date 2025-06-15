@@ -16,6 +16,7 @@ class BaseDataset(Dataset):
         split: str = 'train',
         transform: Optional[transforms.Compose] = None
     ):
+        super().__init__()
         self.root_dir = root_dir
         self.split = split
         self.transform = transform or self._get_default_transforms()
@@ -23,8 +24,7 @@ class BaseDataset(Dataset):
     def _get_default_transforms(self) -> transforms.Compose:
         if self.split == 'train':
             return transforms.Compose([
-                transforms.Resize((256, 256)),  # Resize larger for random crop
-                transforms.RandomCrop(224),     # Random crop to final size
+                transforms.Resize((224, 224)),  # Direct resize to target size
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.RandomRotation(30),  # Increased rotation range
                 transforms.ColorJitter(
@@ -49,8 +49,7 @@ class BaseDataset(Dataset):
             ])
         else:
             return transforms.Compose([
-                transforms.Resize((256, 256)),
-                transforms.CenterCrop(224),
+                transforms.Resize((224, 224)),  # Direct resize to target size
                 transforms.ToTensor(),
                 transforms.Normalize(
                     mean=[0.485, 0.456, 0.406],
@@ -101,9 +100,8 @@ class FERPlusDataset(Dataset):
     def _get_default_transforms(self) -> transforms.Compose:
         if self.split == 'train':
             return transforms.Compose([
-                # Initial resize with slight variation
-                transforms.Resize((256, 256)),
-                transforms.RandomCrop(224, padding=8, padding_mode='reflect'),
+                # Direct resize to target size
+                transforms.Resize((224, 224)),
                 
                 # Face-preserving augmentations
                 FacePreservingAugmentation(p=0.6),  # 60% chance of advanced augmentation
@@ -162,8 +160,7 @@ class FERPlusDataset(Dataset):
             ])
         else:
             return transforms.Compose([
-                transforms.Resize((256, 256)),
-                transforms.CenterCrop(224),
+                transforms.Resize((224, 224)),  # Direct resize to target size
                 transforms.ToTensor(),
                 transforms.Normalize(
                     mean=[0.485, 0.456, 0.406],
@@ -224,27 +221,56 @@ class RAFDBDataset(BaseDataset):
         self,
         root_dir: str,
         split: str = 'train',
-        transform: Optional[transforms.Compose] = None
+        transform: Optional[transforms.Compose] = None,
+        val_split: float = 0.1  # 10% for validation
     ):
         super().__init__(root_dir, split, transform)
         
-        # Load annotations
-        list_path = os.path.join(root_dir, f'{split}_list.txt')
-        with open(list_path, 'r') as f:
-            self.samples = [line.strip().split(' ') for line in f]
+        # Load annotations from CSV
+        if split == 'test':
+            csv_path = os.path.join(root_dir, 'test_labels.csv')
+            self.data = pd.read_csv(csv_path)
+        else:
+            # For train/val, load training data and split
+            csv_path = os.path.join(root_dir, 'train_labels.csv')
+            full_data = pd.read_csv(csv_path)
+            
+            # Ensure deterministic split
+            np.random.seed(42)
+            indices = np.random.permutation(len(full_data))
+            val_size = int(len(full_data) * val_split)
+            
+            if split == 'train':
+                # Use remaining 90% for training
+                train_indices = indices[val_size:]
+                self.data = full_data.iloc[train_indices].reset_index(drop=True)
+            else:  # val
+                # Use 10% for validation
+                val_indices = indices[:val_size]
+                self.data = full_data.iloc[val_indices].reset_index(drop=True)
             
     def __len__(self) -> int:
-        return len(self.samples)
+        return len(self.data)
         
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        img_name, label = self.samples[idx]
-        img_path = os.path.join(self.root_dir, 'images', img_name)
+        row = self.data.iloc[idx]
+        # Get label first (1-based in RAF-DB)
+        label = int(row['label'])
+        
+        # Images are organized in emotion label subdirectories
+        img_path = os.path.join(self.root_dir, 'DATASET', 
+                               'train' if self.split != 'test' else 'test',
+                               str(label),  # Use emotion label as subdirectory
+                               row['image'])
+        
+        # Load and convert to RGB
         image = Image.open(img_path).convert('RGB')
         
         if self.transform:
             image = self.transform(image)
             
-        label = torch.tensor(int(label), dtype=torch.long)
+        # Convert label to 0-based for training
+        label = torch.tensor(label - 1, dtype=torch.long)
         return image, label
 
 class FER2013Dataset(BaseDataset):
